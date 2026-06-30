@@ -1,24 +1,36 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { useEffect, useState, useCallback } from "react";
+import { Stack } from "expo-router";
+import * as ExpoSplashScreen from "expo-splash-screen";
+import SplashScreen from "./splash-screen";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+// Keep the native splash visible while JS bundle loads
+ExpoSplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const [appReady, setAppReady] = useState(false);
+  const [splashDone, setSplashDone] = useState(false);
+
+  useEffect(() => {
+    async function prepare() {
+      // Load fonts / prefetch data here in future
+      await ExpoSplashScreen.hideAsync();
+      setAppReady(true);
+    }
+    prepare();
+  }, []);
+
+  // index.tsx handles the /welcome redirect via <Redirect>.
+  // All this callback needs to do is unmount the custom splash overlay.
+  const handleSplashFinish = useCallback(() => {
+    setSplashDone(true);
+  }, []);
+
+  if (!appReady) return null;
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <>
+      <Stack screenOptions={{ headerShown: false }} />
+      {!splashDone && <SplashScreen onFinish={handleSplashFinish} />}
+    </>
   );
 }
