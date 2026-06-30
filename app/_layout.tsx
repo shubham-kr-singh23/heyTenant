@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Stack } from "expo-router";
 import * as ExpoSplashScreen from "expo-splash-screen";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import SplashScreen from "./splash-screen";
 
 // Keep the native splash visible while JS bundle loads
@@ -28,9 +29,12 @@ export default function RootLayout() {
   if (!appReady) return null;
 
   return (
-    <>
+    // SafeAreaProvider must wrap the entire tree so useSafeAreaInsets()
+    // returns real values on both iOS (notch / Dynamic Island / home bar)
+    // and Android (status bar / gesture nav bar).
+    <SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }} />
       {!splashDone && <SplashScreen onFinish={handleSplashFinish} />}
-    </>
+    </SafeAreaProvider>
   );
 }

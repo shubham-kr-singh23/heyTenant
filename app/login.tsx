@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -9,20 +9,18 @@ import {
   ScrollView,
   Platform,
   StatusBar,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   withDelay,
   withSpring,
-  interpolateColor,
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-
-const { width } = Dimensions.get("window");
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const BRAND_BLUE  = "#1A3C5E";
@@ -57,11 +55,15 @@ const ROLE_CONFIG: Record<
   },
 };
 
-const TAB_WIDTH = (width - 48 - 8) / 2;   // (screen - h-padding*2 - pill-padding*2) / 2 tabs
+// TAB_WIDTH computed dynamically inside switchRole using live width from useWindowDimensions
 
 // ─── Component ──────────────────────────────────────────────────────────────
 export default function LoginScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  // KeyboardAvoidingView offset = status bar height on Android
+  const kavOffset = Platform.OS === "android" ? insets.top : 0;
 
   const [role, setRole] = useState<Role>("renter");
   const [email, setEmail] = useState("");
@@ -98,6 +100,7 @@ export default function LoginScreen() {
     setRole(next);
     setEmail("");
     setPassword("");
+    const TAB_WIDTH = (width - 48 - 8) / 2;
     pillX.value = withSpring(next === "renter" ? 0 : TAB_WIDTH, {
       damping: 18,
       stiffness: 200,
@@ -150,21 +153,22 @@ export default function LoginScreen() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={kavOffset}
     >
-      <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} />
+      <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} translucent={false} />
 
-      {/* Decorative orbs */}
-      <Animated.View style={[styles.orb1, orb1Style]} />
-      <Animated.View style={[styles.orb2, orb2Style]} />
+      {/* Decorative orbs — sized dynamically so they respond to screen changes */}
+      <Animated.View style={[styles.orb1, { width: width * 0.9, height: width * 0.9, borderRadius: (width * 0.9) / 2 }, orb1Style]} />
+      <Animated.View style={[styles.orb2, { width: width * 0.55, height: width * 0.55, borderRadius: (width * 0.55) / 2 }, orb2Style]} />
 
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom + 16, 32) }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Back button */}
+        {/* ── Back button — marginTop driven by real status bar / notch inset */}
         <Animated.View style={pageStyle}>
-          <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.7}>
+          <TouchableOpacity style={[styles.backBtn, { marginTop: Math.max(insets.top + 12, 44) }]} onPress={handleBack} activeOpacity={0.7}>
             <Text style={styles.backArrow}>←</Text>
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
@@ -306,7 +310,10 @@ export default function LoginScreen() {
         <Animated.View style={[styles.footer, formStyle]}>
           <Text style={styles.footerText}>
             New to heyTenant?{" "}
-            <Text style={[styles.footerLink, { color: cfg.btnColor }]}>
+            <Text
+              style={[styles.footerLink, { color: cfg.btnColor }]}
+              onPress={() => router.push("/register")}
+            >
               Create an account
             </Text>
           </Text>
@@ -325,35 +332,28 @@ const styles = StyleSheet.create({
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingBottom: Platform.OS === "ios" ? 48 : 32,
+    paddingBottom: 32,
   },
 
-  // Orbs
+  // Orbs — width/height/borderRadius set dynamically in component
   orb1: {
     position: "absolute",
-    width: width * 0.9,
-    height: width * 0.9,
-    borderRadius: (width * 0.9) / 2,
     backgroundColor: "rgba(74,144,217,0.09)",
-    top: -width * 0.5,
-    left: -width * 0.2,
+    top: -60,
+    left: -40,
   },
   orb2: {
     position: "absolute",
-    width: width * 0.55,
-    height: width * 0.55,
-    borderRadius: (width * 0.55) / 2,
     backgroundColor: "rgba(74,144,217,0.06)",
-    bottom: width * 0.2,
-    right: -width * 0.18,
+    bottom: 80,
+    right: -40,
   },
 
-  // Back
+  // Back — marginTop set dynamically via insets in component
   backBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginTop: Platform.OS === "ios" ? 60 : 44,
     marginBottom: 8,
     alignSelf: "flex-start",
   },
@@ -418,8 +418,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 4,
     left: 4,
-    width: TAB_WIDTH,
-    height: "100%",
+    bottom: 4,
+    width: "50%",
     borderRadius: 12,
     backgroundColor: ACCENT,
   },
@@ -508,11 +508,13 @@ const styles = StyleSheet.create({
     width: 18,
     textAlign: "center",
   },
+  // height:"100%" is unsupported on Android TextInput — use alignSelf + paddingVertical:0
   input: {
     flex: 1,
     fontSize: 15,
     color: WHITE,
-    height: "100%",
+    alignSelf: "center",
+    paddingVertical: 0,
   },
   inputPassword: { paddingRight: 4 },
   eyeBtn: { paddingLeft: 6, paddingVertical: 4 },

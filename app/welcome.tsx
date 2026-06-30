@@ -1,13 +1,13 @@
-﻿import { useEffect } from "react";
+import { useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   StatusBar,
-  Platform,
+  useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -17,8 +17,6 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-
-const { width, height } = Dimensions.get("window");
 
 const BRAND_BLUE = "#1A3C5E";
 const ACCENT = "#4A90D9";
@@ -89,6 +87,8 @@ function FeatureCard({
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   const heroOpacity = useSharedValue(0);
   const heroTranslateY = useSharedValue(30);
@@ -168,15 +168,15 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} />
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+      <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} translucent={false} />
 
       {/* Decorative background orbs */}
-      <Animated.View style={[styles.orb1, orb1Style]} />
-      <Animated.View style={[styles.orb2, orb2Style]} />
+      <Animated.View style={[styles.orb1, { width: width * 0.85, height: width * 0.85, borderRadius: (width * 0.85) / 2, top: -width * 0.35, right: -width * 0.3 }, orb1Style]} />
+      <Animated.View style={[styles.orb2, { width: width * 0.65, height: width * 0.65, borderRadius: (width * 0.65) / 2, bottom: height * 0.12, left: -width * 0.25 }, orb2Style]} />
 
       {/* Top section */}
-      <View style={styles.topSection}>
+      <View style={[styles.topSection, { paddingTop: Math.max(insets.top + 16, 40) }]}>
         {/* Version badge */}
         <Animated.View style={[styles.badge, badgeStyle]}>
           <View style={styles.badgeDot} />
@@ -245,32 +245,24 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BRAND_BLUE,
     paddingHorizontal: 24,
-    paddingBottom: Platform.OS === "ios" ? 40 : 28,
+    // paddingBottom is set dynamically via insets in the component
   },
 
   orb1: {
     position: "absolute",
-    width: width * 0.85,
-    height: width * 0.85,
-    borderRadius: (width * 0.85) / 2,
     backgroundColor: "rgba(74,144,217,0.10)",
-    top: -width * 0.35,
-    right: -width * 0.3,
+    // width/height/borderRadius/position set dynamically in component
   },
   orb2: {
     position: "absolute",
-    width: width * 0.65,
-    height: width * 0.65,
-    borderRadius: (width * 0.65) / 2,
     backgroundColor: "rgba(74,144,217,0.07)",
-    bottom: height * 0.12,
-    left: -width * 0.25,
+    // width/height/borderRadius/position set dynamically in component
   },
 
   topSection: {
     alignItems: "center",
-    paddingTop: Platform.OS === "ios" ? 72 : 56,
-    paddingBottom: 28,
+    // paddingTop set dynamically via insets in the component
+    paddingBottom: 24,
   },
 
   badge: {

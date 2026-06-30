@@ -1,5 +1,5 @@
-﻿import { useEffect } from "react";
-import { View, Text, StyleSheet, Dimensions } from "react-native";
+import { useEffect } from "react";
+import { View, Text, StyleSheet, useWindowDimensions } from "react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -8,8 +8,6 @@ import Animated, {
   Easing,
   runOnJS,
 } from "react-native-reanimated";
-
-const { width } = Dimensions.get("window");
 
 const BRAND_BLUE = "#1A3C5E";
 const ACCENT = "#4A90D9";
@@ -20,6 +18,9 @@ interface SplashScreenProps {
 }
 
 export default function SplashScreen({ onFinish }: SplashScreenProps) {
+  // useWindowDimensions re-renders on orientation change / split-screen
+  const { width } = useWindowDimensions();
+
   const containerOpacity = useSharedValue(1);
   const logoScale = useSharedValue(0.6);
   const logoOpacity = useSharedValue(0);
