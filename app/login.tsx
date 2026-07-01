@@ -118,7 +118,14 @@ export default function LoginScreen() {
   // ── Press handlers
   const handlePressIn  = () => buttonScale.value = withSpring(0.97, { damping: 15, stiffness: 300 });
   const handlePressOut = () => buttonScale.value = withSpring(1,    { damping: 15, stiffness: 300 });
-  const handleLogin    = () => { /* auth logic */ };
+  const handleLogin    = () => {
+    if (role === "landlord") {
+      router.push("/landlord/dashboard");
+    } else {
+      // renter dashboard (future)
+      router.push("/login");
+    }
+  };
   const handleBack     = () => router.back();
 
   // ── Animated styles

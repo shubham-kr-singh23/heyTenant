@@ -5,6 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   StatusBar,
+  Platform,
+  ScrollView,
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -168,74 +170,86 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} translucent={false} />
 
       {/* Decorative background orbs */}
       <Animated.View style={[styles.orb1, { width: width * 0.85, height: width * 0.85, borderRadius: (width * 0.85) / 2, top: -width * 0.35, right: -width * 0.3 }, orb1Style]} />
       <Animated.View style={[styles.orb2, { width: width * 0.65, height: width * 0.65, borderRadius: (width * 0.65) / 2, bottom: height * 0.12, left: -width * 0.25 }, orb2Style]} />
 
-      {/* Top section */}
-      <View style={[styles.topSection, { paddingTop: Math.max(insets.top + 16, 40) }]}>
-        {/* Version badge */}
-        <Animated.View style={[styles.badge, badgeStyle]}>
-          <View style={styles.badgeDot} />
-          <Text style={styles.badgeText}>Tenant Portal · v1.0</Text>
-        </Animated.View>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 16, 40) : Math.max(insets.top + 16, 40),
+            paddingBottom: Math.max(insets.bottom, 20),
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Top section */}
+        <View style={styles.topSection}>
+          {/* Version badge */}
+          <Animated.View style={[styles.badge, badgeStyle]}>
+            <View style={styles.badgeDot} />
+            <Text style={styles.badgeText}>Tenant Portal · v1.0</Text>
+          </Animated.View>
 
-        {/* Logo */}
-        <Animated.View style={[styles.logoWrapper, heroStyle]}>
-          <View style={styles.logoOuter}>
-            <View style={styles.logoInner}>
-              <Text style={styles.logoInitial}>hT</Text>
+          {/* Logo */}
+          <Animated.View style={[styles.logoWrapper, heroStyle]}>
+            <View style={styles.logoOuter}>
+              <View style={styles.logoInner}>
+                <Text style={styles.logoInitial}>hT</Text>
+              </View>
             </View>
-          </View>
-        </Animated.View>
+          </Animated.View>
 
-        {/* Headline */}
-        <Animated.View style={heroStyle}>
-          <Text style={styles.headline}>
-            hey<Text style={styles.headlineAccent}>Tenant</Text>
+          {/* Headline */}
+          <Animated.View style={heroStyle}>
+            <Text style={styles.headline}>
+              hey<Text style={styles.headlineAccent}>Tenant</Text>
+            </Text>
+            <Text style={styles.tagline}>Effortless Living</Text>
+          </Animated.View>
+        </View>
+
+        {/* Feature cards */}
+        <View style={styles.cardsSection}>
+          {FEATURES.map((f, i) => (
+            <FeatureCard
+              key={f.title}
+              icon={f.icon}
+              title={f.title}
+              body={f.body}
+              delay={600 + i * 180}
+            />
+          ))}
+        </View>
+
+        {/* CTA */}
+        <Animated.View style={[styles.ctaWrapper, buttonAnimStyle]}>
+          <TouchableOpacity
+            style={styles.ctaButton}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            onPress={handleGetStarted}
+            activeOpacity={1}
+          >
+            <Text style={styles.ctaText}>Get Started</Text>
+            <View style={styles.ctaArrow}>
+              <Text style={styles.ctaArrowText}>→</Text>
+            </View>
+          </TouchableOpacity>
+
+          <Text style={styles.signInHint}>
+            Already have an account?{" "}
+            <Text style={styles.signInLink} onPress={handleGetStarted}>
+              Sign in
+            </Text>
           </Text>
-          <Text style={styles.tagline}>Effortless Living</Text>
         </Animated.View>
-      </View>
-
-      {/* Feature cards */}
-      <View style={styles.cardsSection}>
-        {FEATURES.map((f, i) => (
-          <FeatureCard
-            key={f.title}
-            icon={f.icon}
-            title={f.title}
-            body={f.body}
-            delay={600 + i * 180}
-          />
-        ))}
-      </View>
-
-      {/* CTA */}
-      <Animated.View style={[styles.ctaWrapper, buttonAnimStyle]}>
-        <TouchableOpacity
-          style={styles.ctaButton}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          onPress={handleGetStarted}
-          activeOpacity={1}
-        >
-          <Text style={styles.ctaText}>Get Started</Text>
-          <View style={styles.ctaArrow}>
-            <Text style={styles.ctaArrowText}>→</Text>
-          </View>
-        </TouchableOpacity>
-
-        <Text style={styles.signInHint}>
-          Already have an account?{" "}
-          <Text style={styles.signInLink} onPress={handleGetStarted}>
-            Sign in
-          </Text>
-        </Text>
-      </Animated.View>
+      </ScrollView>
     </View>
   );
 }
@@ -244,8 +258,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: BRAND_BLUE,
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 24,
-    // paddingBottom is set dynamically via insets in the component
   },
 
   orb1: {
@@ -261,7 +277,6 @@ const styles = StyleSheet.create({
 
   topSection: {
     alignItems: "center",
-    // paddingTop set dynamically via insets in the component
     paddingBottom: 24,
   },
 
@@ -338,9 +353,7 @@ const styles = StyleSheet.create({
   },
 
   cardsSection: {
-    flex: 1,
-    justifyContent: "center",
-    gap: 12,
+    marginBottom: 8,
   },
   card: {
     flexDirection: "row",
@@ -350,7 +363,7 @@ const styles = StyleSheet.create({
     borderColor: WHITE_15,
     borderRadius: 16,
     padding: 16,
-    gap: 14,
+    marginBottom: 12,
   },
   cardIcon: {
     width: 44,
@@ -362,6 +375,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    marginRight: 14,
   },
   cardIconText: {
     fontSize: 20,
