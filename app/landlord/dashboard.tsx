@@ -433,14 +433,15 @@ export default function LandlordDashboard() {
             <SectionHeader title="Quick Actions" />
             <View style={s.actionsGrid}>
               {[
-                { label: "Add Property", color: ACCENT_LIGHT },
-                { label: "Add Tenant",   color: SUCCESS       },
-                { label: "Send Notice",  color: WARNING       },
-                { label: "View Reports", color: PURPLE        },
-                { label: "New Invoice",  color: ACCENT_LIGHT  },
-                { label: "Inspections",  color: DANGER        },
+                { label: "Add Property", color: ACCENT_LIGHT, route: "/landlord/add-property" },
+                { label: "Add Tenant",   color: SUCCESS,       route: "/landlord/add-tenant"   },
+                { label: "Send Notice",  color: WARNING,       route: "/landlord/send-notice"  },
+                { label: "View Reports", color: PURPLE,        route: "/landlord/view-reports" },
+                { label: "New Invoice",  color: ACCENT_LIGHT,  route: "/landlord/new-invoice"  },
+                { label: "Inspections",  color: DANGER,        route: "/landlord/inspections"  },
               ].map((a) => (
-                <TouchableOpacity key={a.label} style={s.actionBtn} activeOpacity={0.7}>
+                <TouchableOpacity key={a.label} style={s.actionBtn} activeOpacity={0.7}
+                  onPress={() => router.push(a.route as any)}>
                   <View style={[s.actionDot, { backgroundColor: `${a.color}25` }]} />
                   <Text style={s.actionLbl}>{a.label}</Text>
                 </TouchableOpacity>

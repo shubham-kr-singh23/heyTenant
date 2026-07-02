@@ -122,8 +122,7 @@ export default function LoginScreen() {
     if (role === "landlord") {
       router.push("/landlord/dashboard");
     } else {
-      // renter dashboard (future)
-      router.push("/login");
+      router.push("/renter/dashboard");
     }
   };
   const handleBack     = () => router.back();
