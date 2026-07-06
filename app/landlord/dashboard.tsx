@@ -259,13 +259,13 @@ export default function LandlordDashboard() {
 
       {/* Header */}
       <Animated.View style={[s.header, { paddingTop }, headerStyle]}>
-        <View style={s.hLeft}>
+        <TouchableOpacity style={s.hLeft} onPress={() => router.push("/landlord/profile")} activeOpacity={0.8}>
           <View style={s.avatar}><Text style={s.avatarTxt}>JD</Text></View>
           <View>
             <Text style={s.greeting}>Good morning</Text>
             <Text style={s.userName}>John Davies</Text>
           </View>
-        </View>
+        </TouchableOpacity>
         <View style={s.hRight}>
           <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
             <Text style={s.iconBtnTxt}>{"\uD83D\uDD14"}</Text>
