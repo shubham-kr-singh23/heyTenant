@@ -1,14 +1,24 @@
-import { Redirect } from "expo-router";
+﻿import { Redirect } from "expo-router";
 import { View, StyleSheet } from "react-native";
+import { useAuth } from "@clerk/expo";
 
-// The true entry point is /welcome.
-// Using <Redirect> means Expo Router replaces this route synchronously
-// before any paint — the user never sees this screen.
+// Redirect signed-in users straight to their dashboard, everyone else to welcome.
+// Using <Redirect> replaces this route synchronously before any paint.
 export default function Index() {
+  const { isSignedIn, isLoaded } = useAuth();
+
+  // While Clerk is initialising, render the background colour only
+  // - the custom splash screen is already covering it.
+  if (!isLoaded) {
+    return <View style={styles.bg} />;
+  }
+
+  if (isSignedIn) {
+    return <Redirect href="/renter/dashboard" />;
+  }
+
   return (
     <>
-      {/* Solid background matches the splash so there is zero visible flash
-          in the unlikely event the redirect hasn't resolved yet. */}
       <View style={styles.bg} />
       <Redirect href="/welcome" />
     </>

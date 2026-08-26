@@ -8,6 +8,8 @@ import {
   Platform,
   StatusBar,
   Linking,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -18,8 +20,9 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useClerk } from "@clerk/expo";
 
-// ─── Palette (matches dashboard) ─────────────────────────────────────────────
+// â”€â”€â”€ Palette (matches dashboard) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
 const ACCENT       = "#3B6FA8";
@@ -41,7 +44,7 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-// ─── Mock profile data ────────────────────────────────────────────────────────
+// â”€â”€â”€ Mock profile data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PROFILE = {
   name:         "John Davies",
   initials:     "JD",
@@ -85,7 +88,7 @@ const QUICK_LINKS = [
   { id: "5", icon: "\uD83D\uDCCA", label: "HMRC Property Income",   url: "https://www.gov.uk/income-tax-when-you-rent-out-a-property"        },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0);
   const ty = useSharedValue(18);
@@ -143,9 +146,37 @@ const cr = StyleSheet.create({
   chevron:  { fontSize: 18, color: WHITE_40 },
 });
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Main screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function LandlordProfile() {
   const router = useRouter();
+  const { signOut } = useClerk();
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSigningOut(true);
+              await signOut();
+              router.replace("/welcome");
+            } catch (err) {
+              console.error("Sign out error:", err);
+              Alert.alert("Error", "Failed to sign out. Please try again.");
+            } finally {
+              setSigningOut(false);
+            }
+          },
+        },
+      ]
+    );
+  };
   const insets = useSafeAreaInsets();
   const [activeSection, setActiveSection] = useState<"overview" | "portfolio" | "documents">("overview");
 
@@ -174,7 +205,7 @@ export default function LandlordProfile() {
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor={BRAND_DEEP} translucent={false} />
 
-      {/* ── Top bar ── */}
+      {/* â”€â”€ Top bar â”€â”€ */}
       <Animated.View style={[s.topBar, { paddingTop }, headerStyle]}>
         <TouchableOpacity style={s.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
           <Text style={s.backIcon}>{"\u2039"}</Text>
@@ -185,7 +216,7 @@ export default function LandlordProfile() {
         </TouchableOpacity>
       </Animated.View>
 
-      {/* ── Tab bar ── */}
+      {/* â”€â”€ Tab bar â”€â”€ */}
       <Animated.View style={[s.tabBar, headerStyle]}>
         {TABS.map((t) => (
           <TouchableOpacity
@@ -204,7 +235,7 @@ export default function LandlordProfile() {
         contentContainerStyle={[s.scrollContent, { paddingBottom: Math.max(insets.bottom + 32, 48) }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ════ HERO CARD ════ */}
+        {/* â•â•â•â• HERO CARD â•â•â•â• */}
         <FadeIn delay={0}>
           <View style={s.heroCard}>
             <View style={s.avatarOuter}>
@@ -261,7 +292,7 @@ export default function LandlordProfile() {
           </View>
         </FadeIn>
 
-        {/* ════ OVERVIEW TAB ════ */}
+        {/* â•â•â•â• OVERVIEW TAB â•â•â•â• */}
         {activeSection === "overview" && (
           <>
             <FadeIn delay={60}>
@@ -346,7 +377,7 @@ export default function LandlordProfile() {
           </>
         )}
 
-        {/* ════ PORTFOLIO TAB ════ */}
+        {/* â•â•â•â• PORTFOLIO TAB â•â•â•â• */}
         {activeSection === "portfolio" && (
           <>
             <FadeIn delay={0}>
@@ -429,7 +460,7 @@ export default function LandlordProfile() {
           </>
         )}
 
-        {/* ════ DOCUMENTS TAB ════ */}
+        {/* â•â•â•â• DOCUMENTS TAB â•â•â•â• */}
         {activeSection === "documents" && (
           <>
             <FadeIn delay={0}>
@@ -472,10 +503,18 @@ export default function LandlordProfile() {
           </>
         )}
 
-        {/* ── Sign out ── */}
+        {/* â”€â”€ Sign out â”€â”€ */}
         <FadeIn delay={320}>
-          <TouchableOpacity style={s.signOut} onPress={() => router.replace("/login")} activeOpacity={0.75}>
-            <Text style={s.signOutTxt}>Sign Out</Text>
+          <TouchableOpacity
+            style={[s.signOut, signingOut && s.signOutDisabled]}
+            onPress={handleSignOut}
+            activeOpacity={0.75}
+            disabled={signingOut}
+          >
+            {signingOut
+              ? <ActivityIndicator size="small" color="#F87171" />
+              : <Text style={s.signOutTxt}>Sign Out</Text>
+            }
           </TouchableOpacity>
         </FadeIn>
 
@@ -484,7 +523,7 @@ export default function LandlordProfile() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const s = StyleSheet.create({
   root:          { flex: 1, backgroundColor: BRAND_BLUE },
   scroll:        { flex: 1 },
@@ -609,6 +648,8 @@ const s = StyleSheet.create({
   uploadTxt:  { fontSize: 14, fontWeight: "600", color: ACCENT_LIGHT },
 
   // Sign out
-  signOut:    { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
-  signOutTxt: { fontSize: 14, fontWeight: "600", color: WHITE_40 },
+  signOut:         { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
+  signOutDisabled: { opacity: 0.5 },
+  signOutTxt:      { fontSize: 14, fontWeight: "600", color: "#F87171" },
 });
+

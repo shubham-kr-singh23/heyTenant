@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Platform,
   StatusBar,
   useWindowDimensions,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -21,8 +22,14 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useSSO, useAuth } from "@clerk/expo";
+import * as WebBrowser from "expo-web-browser";
+import * as Linking from "expo-linking";
 
-// ─── Palette ────────────────────────────────────────────────────────────────
+// Warm up the browser so the OAuth redirect feels instant on Android
+WebBrowser.maybeCompleteAuthSession();
+
+// -- Palette
 const BRAND_BLUE  = "#1A3C5E";
 const ACCENT      = "#4A90D9";
 const LANDLORD    = "#3B6FA8";   // slightly deeper accent for Landlord mode
@@ -57,7 +64,7 @@ const ROLE_CONFIG: Record<
 
 // TAB_WIDTH computed dynamically inside switchRole using live width from useWindowDimensions
 
-// ─── Component ──────────────────────────────────────────────────────────────
+// -- Component
 export default function LoginScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -70,8 +77,13 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [focused, setFocused] = useState<"email" | "password" | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
-  // ── Entry animations
+  // -- Clerk Google SSO
+  const { startSSOFlow } = useSSO();
+  const { isSignedIn } = useAuth();
+
+  // -- Entry animations
   const pageOpacity    = useSharedValue(0);
   const pageTranslateY = useSharedValue(28);
   const formOpacity    = useSharedValue(0);
@@ -80,7 +92,7 @@ export default function LoginScreen() {
   const orb1Scale      = useSharedValue(0.7);
   const orb2Scale      = useSharedValue(0.7);
 
-  // ── Role-switcher pill indicator
+  // -- Role-switcher pill indicator
   const pillX = useSharedValue(0);
 
   useEffect(() => {
@@ -94,7 +106,7 @@ export default function LoginScreen() {
     formTranslateY.value = withDelay(250, withTiming(0, { duration: 500, easing: Easing.out(Easing.cubic) }));
   }, []);
 
-  // ── Switch role
+  // -- Switch role
   const switchRole = (next: Role) => {
     if (next === role) return;
     setRole(next);
@@ -115,9 +127,9 @@ export default function LoginScreen() {
     formTranslateY.value = withTiming(8, { duration: 120 });
   };
 
-  // ── Press handlers
-  const handlePressIn  = () => buttonScale.value = withSpring(0.97, { damping: 15, stiffness: 300 });
-  const handlePressOut = () => buttonScale.value = withSpring(1,    { damping: 15, stiffness: 300 });
+  // -- Press handlers
+  const handlePressIn  = () => { buttonScale.value = withSpring(0.97, { damping: 15, stiffness: 300 }); };
+  const handlePressOut = () => { buttonScale.value = withSpring(1,    { damping: 15, stiffness: 300 }); };
   const handleLogin    = () => {
     if (role === "landlord") {
       router.push("/landlord/dashboard");
@@ -125,9 +137,44 @@ export default function LoginScreen() {
       router.push("/renter/dashboard");
     }
   };
-  const handleBack     = () => router.back();
+  const handleBack = () => router.back();
 
-  // ── Animated styles
+  // -- Google Sign-In via Clerk SSO
+  const handleGoogleSignIn = useCallback(async () => {
+    try {
+      setGoogleLoading(true);
+
+      // Already signed in — just navigate, skip the OAuth flow entirely
+      if (isSignedIn) {
+        router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+        return;
+      }
+
+      const redirectUrl = Linking.createURL("/");
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy: "oauth_google",
+        redirectUrl,
+      });
+
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+      }
+    } catch (err: any) {
+      // Clerk throws "You're already signed in." if a session slipped through the guard.
+      // Treat it as a successful sign-in rather than a crash.
+      const msg: string = err?.message ?? String(err);
+      if (msg.toLowerCase().includes("already signed in")) {
+        router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+      } else {
+        console.error("Google Sign-In error:", err);
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  }, [startSSOFlow, isSignedIn, role, router]);
+
+  // -- Animated styles
   const pageStyle = useAnimatedStyle(() => ({
     opacity:   pageOpacity.value,
     transform: [{ translateY: pageTranslateY.value }],
@@ -163,7 +210,7 @@ export default function LoginScreen() {
     >
       <StatusBar barStyle="light-content" backgroundColor={BRAND_BLUE} translucent={false} />
 
-      {/* Decorative orbs — sized dynamically so they respond to screen changes */}
+      {/* Decorative orbs -- sized dynamically so they respond to screen changes */}
       <Animated.View style={[styles.orb1, { width: width * 0.9, height: width * 0.9, borderRadius: (width * 0.9) / 2 }, orb1Style]} />
       <Animated.View style={[styles.orb2, { width: width * 0.55, height: width * 0.55, borderRadius: (width * 0.55) / 2 }, orb2Style]} />
 
@@ -172,7 +219,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Back button — marginTop driven by real status bar / notch inset */}
+        {/* -- Back button -- marginTop driven by real status bar / notch inset */}
         <Animated.View style={pageStyle}>
           <TouchableOpacity style={[styles.backBtn, { marginTop: Math.max(insets.top + 12, 44) }]} onPress={handleBack} activeOpacity={0.7}>
             <Text style={styles.backArrow}>←</Text>
@@ -180,7 +227,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* ── Logo + headline */}
+        {/* -- Logo + headline */}
         <Animated.View style={[styles.headerSection, pageStyle]}>
           <View style={styles.logoOuter}>
             <View style={styles.logoInner}>
@@ -191,7 +238,7 @@ export default function LoginScreen() {
           <Text style={styles.subtitle}>{cfg.subtitle}</Text>
         </Animated.View>
 
-        {/* ── Role switcher pill */}
+        {/* -- Role switcher pill */}
         <Animated.View style={[styles.tabTrack, pageStyle]}>
           {/* sliding indicator */}
           <Animated.View style={[styles.tabPill, pillStyle]} />
@@ -210,7 +257,7 @@ export default function LoginScreen() {
           ))}
         </Animated.View>
 
-        {/* ── Role context chip */}
+        {/* -- Role context chip */}
         <Animated.View style={[styles.roleChipRow, formStyle]}>
           <View style={[styles.roleChip, { backgroundColor: role === "renter" ? "rgba(74,144,217,0.15)" : "rgba(59,111,168,0.15)" }]}>
             <View style={[styles.roleChipDot, { backgroundColor: cfg.btnColor }]} />
@@ -220,7 +267,7 @@ export default function LoginScreen() {
           </View>
         </Animated.View>
 
-        {/* ── Form */}
+        {/* -- Form */}
         <Animated.View style={[styles.formSection, formStyle]}>
           {/* Email */}
           <View style={styles.fieldGroup}>
@@ -300,10 +347,24 @@ export default function LoginScreen() {
 
           {/* Social */}
           <View style={styles.socialRow}>
+            {/* Google -- wired to Clerk SSO */}
+            <TouchableOpacity
+              style={styles.socialBtn}
+              activeOpacity={0.75}
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator size="small" color={WHITE_72} />
+              ) : (
+                <Text style={styles.socialText}>Google</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Apple and SSO -- placeholder */}
             {[
-              { id: "google", label: "Google" },
-              { id: "apple",  label: "Apple"  },
-              { id: "sso",    label: "SSO"    },
+              { id: "apple", label: "Apple" },
+              { id: "sso",   label: "SSO"   },
             ].map(({ id, label }) => (
               <TouchableOpacity key={id} style={styles.socialBtn} activeOpacity={0.75}>
                 <Text style={styles.socialText}>{label}</Text>
@@ -312,7 +373,7 @@ export default function LoginScreen() {
           </View>
         </Animated.View>
 
-        {/* ── Footer */}
+        {/* -- Footer */}
         <Animated.View style={[styles.footer, formStyle]}>
           <Text style={styles.footerText}>
             New to heyTenant?{" "}
@@ -329,7 +390,7 @@ export default function LoginScreen() {
   );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+// -- Styles
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -341,7 +402,7 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
 
-  // Orbs — width/height/borderRadius set dynamically in component
+  // Orbs - width/height/borderRadius set dynamically in component
   orb1: {
     position: "absolute",
     backgroundColor: "rgba(74,144,217,0.09)",
@@ -355,7 +416,7 @@ const styles = StyleSheet.create({
     right: -40,
   },
 
-  // Back — marginTop set dynamically via insets in component
+  // Back - marginTop set dynamically via insets in component
   backBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -514,7 +575,6 @@ const styles = StyleSheet.create({
     width: 18,
     textAlign: "center",
   },
-  // height:"100%" is unsupported on Android TextInput — use alignSelf + paddingVertical:0
   input: {
     flex: 1,
     fontSize: 15,

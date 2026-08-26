@@ -68,15 +68,49 @@ export default function PayRent() {
   const succSc = useSharedValue(0.6);
   const cur    = PAYMENT_METHODS.find(m => m.id === method)!;
 
+  const [payError, setPayError] = useState<string | null>(null);
+
+  const METHOD_MAP: Record<string, string> = {
+    bank: "BANK_TRANSFER", card: "CARD", bacs: "DIRECT_DEBIT", open: "OPEN_BANKING",
+  };
+
   const pay = async () => {
     if (step === "select") { setStep("confirm"); return; }
     setBusy(true);
+    setPayError(null);
     btnSc.value = withSpring(0.96, { damping: 15 });
-    await new Promise(r => setTimeout(r, 1400));
-    setBusy(false);
-    setStep("success");
-    succOp.value = withTiming(1, { duration: 400 });
-    succSc.value = withSpring(1, { damping: 12, stiffness: 180 });
+    try {
+      const { api, TokenStore } = await import("../../constants/api");
+      const token = await TokenStore.getAccess();
+      if (!token) { router.replace("/login"); return; }
+
+      // We need an active lease ID — fetch it first
+      const leaseRes = await api.get<{ id: string }>("/api/renter/lease");
+      const leaseId = (leaseRes.data as any)?.id;
+      if (!leaseId) {
+        setPayError("No active lease found. Cannot process payment.");
+        return;
+      }
+
+      const res = await api.post("/api/renter/payments", {
+        leaseId,
+        amount:    1250,
+        method:    METHOD_MAP[method] ?? "BANK_TRANSFER",
+        reference: ref,
+        period:    "January 2025",
+      });
+      if (!res.success) {
+        setPayError(res.error?.message ?? "Payment failed. Please try again.");
+        return;
+      }
+      setStep("success");
+      succOp.value = withTiming(1, { duration: 400 });
+      succSc.value = withSpring(1, { damping: 12, stiffness: 180 });
+    } catch {
+      setPayError("Network error — is the server running?");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -202,6 +236,12 @@ export default function PayRent() {
               </View>
             </FadeIn>
           </>}
+
+          {payError ? (
+            <View style={{ paddingHorizontal: 4, marginBottom: 4 }}>
+              <Text style={{ color: "#F87171", fontSize: 12, textAlign: "center" }}>{payError}</Text>
+            </View>
+          ) : null}
 
           <FadeIn delay={step === "confirm" ? 140 : 350}>
             <Animated.View style={btnStyle}>

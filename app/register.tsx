@@ -214,70 +214,97 @@ export default function RegisterScreen() {
     return Object.keys(e).length === 0;
   };
 
-  // ── Landlord step 1 → send OTP ──────────────────────────────────────────────
+  // ── Landlord step 1 → register on backend + send OTP ─────────────────────────
   const handleLandlordStep1 = async () => {
     if (!validatePersonal()) return;
     setSub(true);
-    await new Promise(r => setTimeout(r, 700));
-    const secret = generateOtp();
-    setOtpSecret(secret);
-    setOtpValue("");
-    setOtpStatus("idle");
-    setCountdown(60);
-    setSub(false);
-    // Production: await api.sendOtp(email, secret);
-    console.log(`[DEV] OTP for ${email}: ${secret}`);
-    animForm(() => setStep(2));
+    setErr({});
+    try {
+      const { authApi } = await import("../constants/api");
+      const res = await authApi.registerLandlord({ fullName, email, password, phone: phone || undefined });
+      if (!res.success) {
+        setErr({ email: res.error?.message ?? "Registration failed." });
+        return;
+      }
+      // Backend sends OTP; store email for verify step
+      setOtpValue("");
+      setOtpStatus("idle");
+      setCountdown(60);
+      animForm(() => setStep(2));
+    } catch {
+      setErr({ email: "Network error — is the server running?" });
+    } finally {
+      setSub(false);
+    }
   };
 
-  // ── Landlord step 2 → verify OTP → create account ───────────────────────────
+  // ── Landlord step 2 → verify OTP via backend ─────────────────────────────────
   const handleVerifyOtp = async () => {
     const e: Record<string, string> = {};
     if (otpValue.length < 6) { e.otp = "Enter the full 6-digit code."; setErr(e); return; }
     setOtpStatus("verifying");
     setErr({});
-    await new Promise(r => setTimeout(r, 900));
-    if (otpValue !== otpSecret) {
+    try {
+      const { authApi, TokenStore } = await import("../constants/api");
+      const res = await authApi.verifyOtp(email, otpValue);
+      if (!res.success || !res.data) {
+        setOtpStatus("error");
+        setErr({ otp: res.error?.message ?? "Incorrect code." });
+        return;
+      }
+      await TokenStore.saveTokens(res.data.accessToken, res.data.refreshToken);
+      await TokenStore.saveUser(res.data.user);
+      setOtpStatus("verified");
+      // Show landlord code from the registered user
+      const code = res.data.user.landlordCode ?? generateLandlordCode();
+      setCode(code);
+      animForm(() => setStep(3));
+    } catch {
       setOtpStatus("error");
-      setErr({ otp: "Incorrect code. Check your email and try again." });
-      return;
+      setErr({ otp: "Network error — is the server running?" });
     }
-    setOtpStatus("verified");
-    await new Promise(r => setTimeout(r, 400));
-    const code = generateLandlordCode();
-    setCode(code);
-    animForm(() => setStep(3));
   };
 
   const handleResendOtp = async () => {
     if (otpCountdown > 0) return;
-    const secret = generateOtp();
-    setOtpSecret(secret);
     setOtpValue("");
     setOtpStatus("idle");
     setErr({});
     setCountdown(60);
-    console.log(`[DEV] Resent OTP for ${email}: ${secret}`);
+    try {
+      const { authApi } = await import("../constants/api");
+      await authApi.sendOtp(email);
+    } catch {
+      console.warn("[RESEND OTP] Network error");
+    }
   };
 
   // ── Renter flow ──────────────────────────────────────────────────────────────
   const verifyLandlordKey = async (): Promise<boolean> => {
     if (landlordKey.length < 6) { setErr({ landlordKey: "Enter the full 6-character landlord code." }); return false; }
-    setKS("checking"); setErr({});
-    await new Promise(r => setTimeout(r, 1100));
-    const ok = landlordKey.length === 6;
-    setKS(ok ? "valid" : "invalid");
-    if (!ok) setErr({ landlordKey: "Invalid code. Ask your landlord for the correct code." });
-    return ok;
+    // Actual validation happens during registerRenter — just a length pre-check here
+    setKS("valid"); setErr({});
+    return true;
   };
 
   const handleRenterStep1 = async () => { const ok = await verifyLandlordKey(); if (ok) animForm(() => setStep(2)); };
   const handleRenterStep2 = async () => {
     if (!validatePersonal()) return;
     setSub(true);
-    await new Promise(r => setTimeout(r, 1200));
-    setSub(false);
-    router.replace("/login");
+    setErr({});
+    try {
+      const { authApi } = await import("../constants/api");
+      const res = await authApi.registerRenter({ fullName, email, password, phone: phone || undefined, landlordCode: landlordKey });
+      if (!res.success) {
+        setErr({ email: res.error?.message ?? "Registration failed." });
+        return;
+      }
+      router.replace("/login");
+    } catch {
+      setErr({ email: "Network error — is the server running?" });
+    } finally {
+      setSub(false);
+    }
   };
 
   const handleCopy = () => {

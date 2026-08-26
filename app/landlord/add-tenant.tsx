@@ -112,11 +112,50 @@ export default function AddTenant() {
     return Object.keys(e).length === 0;
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const handleSubmit = async () => {
     if (!validate()) return;
     setSubmitting(true);
-    await new Promise(r => setTimeout(r, 900));
-    router.back();
+    setSubmitError(null);
+    try {
+      const { api, TokenStore } = await import("../../constants/api");
+      const token = await TokenStore.getAccess();
+      if (!token) { router.replace("/login"); return; }
+
+      // Format dates from DD/MM/YYYY → YYYY-MM-DD
+      const parseDMY = (d: string) => {
+        const [dd, mm, yyyy] = d.split("/");
+        return `${yyyy}-${mm.padStart(2,"0")}-${dd.padStart(2,"0")}`;
+      };
+
+      const unit = AVAILABLE_UNITS.find(u => u.id === selectedUnit);
+      const res = await api.post("/api/landlord/tenants", {
+        propertyId:             selectedUnit,
+        firstName:              firstName.trim(),
+        lastName:               lastName.trim(),
+        email:                  email.trim(),
+        phone:                  phone.trim(),
+        dateOfBirth:            dob.trim() || undefined,
+        nationalInsuranceNumber: nin.trim() || undefined,
+        leaseStart:             parseDMY(leaseStart),
+        leaseEnd:               parseDMY(leaseEnd),
+        rentDueDay:             rentDay ? parseInt(rentDay, 10) : undefined,
+        emergencyContactName:   emergName.trim() || undefined,
+        emergencyContactPhone:  emergPhone.trim() || undefined,
+        checklistCompleted:     checklist.length > 0 ? checklist : undefined,
+        notes:                  notes.trim() || undefined,
+      });
+      if (!res.success) {
+        setSubmitError(res.error?.message ?? "Failed to add tenant.");
+        return;
+      }
+      router.back();
+    } catch {
+      setSubmitError("Network error — is the server running?");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -242,6 +281,11 @@ export default function AddTenant() {
             </View>
           </FadeIn>
 
+          {submitError ? (
+            <View style={{ paddingHorizontal: 4, marginBottom: -6 }}>
+              <Text style={{ color: "#F87171", fontSize: 12, textAlign: "center" }}>{submitError}</Text>
+            </View>
+          ) : null}
           <FadeIn delay={380}>
             <TouchableOpacity style={[s.submitBtn, submitting && { opacity: 0.6 }]} onPress={handleSubmit} activeOpacity={0.85} disabled={submitting}>
               <Text style={s.submitTxt}>{submitting ? "Saving…" : "Add Tenant"}</Text>

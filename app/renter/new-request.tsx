@@ -75,6 +75,8 @@ export default function NewRequest() {
 
   const cp = PRIORITIES.find(p => p.id === prio)!;
 
+  const [submitRef, setSubmitRef] = useState<string | null>(null);
+
   const submit = async () => {
     const e: Record<string, string> = {};
     if (!cat)          e.cat   = "Please select a category.";
@@ -83,8 +85,31 @@ export default function NewRequest() {
     setErrors(e);
     if (Object.keys(e).length) return;
     setBusy(true);
-    await new Promise(r => setTimeout(r, 1000));
-    setDone(true);
+    try {
+      const { api, TokenStore } = await import("../../constants/api");
+      const token = await TokenStore.getAccess();
+      if (!token) { router.replace("/login"); return; }
+      const res = await api.post("/api/renter/maintenance", {
+        category:    cat,
+        priority:    prio.toUpperCase(),
+        title:       title.trim(),
+        description: desc.trim(),
+        location:    loc.trim() || undefined,
+        accessNote:  access !== "anytime" ? access : undefined,
+      });
+      if (!res.success) {
+        setErrors({ desc: res.error?.message ?? "Submission failed." });
+        return;
+      }
+      // Use the reference returned by the backend if available
+      const ref = (res.data as any)?.reference ?? `MR-${Math.floor(1000 + Math.random() * 9000)}`;
+      setSubmitRef(ref);
+      setDone(true);
+    } catch {
+      setErrors({ desc: "Network error — is the server running?" });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -97,7 +122,7 @@ export default function NewRequest() {
       <View style={s.succCard}>
         <View style={s.succIcon}><Text style={{ fontSize: 36 }}>✓</Text></View>
         <Text style={s.succTitle}>Request Submitted</Text>
-        <Text style={[s.succRef, { color: TEAL }]}>Ref #MR-{Math.floor(1000 + Math.random() * 9000)}</Text>
+        <Text style={[s.succRef, { color: TEAL }]}>Ref #{submitRef}</Text>
         <Text style={s.succBody}>Your request has been received. You'll be notified once a technician is assigned.</Text>
         <View style={s.succMeta}>
           {[["Issue", title, null], ["Priority", cp.label, cp.color], ["Category", CATS.find(c => c.id === cat)?.label ?? "", null]].map(([l, v, c]) => (

@@ -1,10 +1,12 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, StatusBar, Linking,
+  Alert, ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useClerk } from "@clerk/expo";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -155,6 +157,34 @@ const pb = StyleSheet.create({
 
 export default function RenterProfile() {
   const router = useRouter();
+  const { signOut } = useClerk();
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSigningOut(true);
+              await signOut();
+              router.replace("/welcome");
+            } catch (err) {
+              console.error("Sign out error:", err);
+              Alert.alert("Error", "Failed to sign out. Please try again.");
+            } finally {
+              setSigningOut(false);
+            }
+          },
+        },
+      ]
+    );
+  };
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<"overview" | "tenancy" | "documents">("overview");
 
@@ -495,8 +525,16 @@ export default function RenterProfile() {
         )}
 
         <FadeIn delay={320}>
-          <TouchableOpacity style={s.signOut} onPress={() => router.replace("/login")} activeOpacity={0.75}>
-            <Text style={s.signOutTxt}>Sign Out</Text>
+          <TouchableOpacity
+            style={[s.signOut, signingOut && s.signOutDisabled]}
+            onPress={handleSignOut}
+            activeOpacity={0.75}
+            disabled={signingOut}
+          >
+            {signingOut
+              ? <ActivityIndicator size="small" color="#F87171" />
+              : <Text style={s.signOutTxt}>Sign Out</Text>
+            }
           </TouchableOpacity>
         </FadeIn>
 
@@ -623,6 +661,8 @@ const s = StyleSheet.create({
   uploadBtn:  { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 15, borderRadius: 16, borderWidth: 1, borderColor: WHITE_20, backgroundColor: WHITE_05 },
   uploadIcon: { fontSize: 18, color: TEAL },
   uploadTxt:  { fontSize: 14, fontWeight: "600", color: TEAL },
-  signOut:    { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
-  signOutTxt: { fontSize: 14, fontWeight: "600", color: WHITE_40 },
+  signOut:         { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
+  signOutDisabled: { opacity: 0.5 },
+  signOutTxt:      { fontSize: 14, fontWeight: "600", color: "#F87171" },
 });
+

@@ -109,11 +109,50 @@ export default function AddProperty() {
     return Object.keys(e).length === 0;
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const handleSubmit = async () => {
     if (!validate()) return;
     setSubmitted(true);
-    await new Promise(r => setTimeout(r, 800));
-    router.back();
+    setSubmitError(null);
+    try {
+      const { api, TokenStore } = await import("../../constants/api");
+      const token = await TokenStore.getAccess();
+      if (!token) { router.replace("/login"); return; }
+
+      // Map UI labels to schema enums
+      const typeMap: Record<string, string> = {
+        "Apartment": "APARTMENT", "House": "HOUSE", "Studio": "STUDIO",
+        "Commercial": "COMMERCIAL", "HMO": "HMO",
+      };
+      const furnMap: Record<string, string> = {
+        "Furnished": "FURNISHED", "Part-Furnished": "PART_FURNISHED", "Unfurnished": "UNFURNISHED",
+      };
+
+      const res = await api.post("/api/landlord/properties", {
+        name:         name.trim(),
+        addressLine1: addr.trim(),
+        city:         city.trim(),
+        postcode:     post.trim(),
+        propertyType: typeMap[propertyType] ?? "APARTMENT",
+        furnishing:   furnMap[furnishing]   ?? "FURNISHED",
+        bedrooms:     parseInt(beds, 10) || 0,
+        bathrooms:    baths ? parseInt(baths, 10) : undefined,
+        monthlyRent:  parseFloat(rent.replace(/,/g, "")) || 0,
+        depositAmount: deposit ? parseFloat(deposit.replace(/,/g, "")) : undefined,
+        description:  desc.trim() || undefined,
+        amenities:    amenities.length > 0 ? amenities : undefined,
+      });
+      if (!res.success) {
+        setSubmitError(res.error?.message ?? "Failed to add property.");
+        setSubmitted(false);
+        return;
+      }
+      router.back();
+    } catch {
+      setSubmitError("Network error — is the server running?");
+      setSubmitted(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -241,6 +280,11 @@ export default function AddProperty() {
           </FadeIn>
 
           {/* Submit */}
+          {submitError ? (
+            <View style={{ paddingHorizontal: 4, marginBottom: -6 }}>
+              <Text style={{ color: "#F87171", fontSize: 12, textAlign: "center" }}>{submitError}</Text>
+            </View>
+          ) : null}
           <FadeIn delay={400}>
             <TouchableOpacity style={[s.submitBtn, submitted && s.submitDim]} onPress={handleSubmit} activeOpacity={0.85} disabled={submitted}>
               <Text style={s.submitTxt}>{submitted ? "Saving…" : "Add Property"}</Text>
