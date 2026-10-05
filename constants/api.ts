@@ -22,7 +22,10 @@ export const TokenStore = {
     return AsyncStorage.getItem(REFRESH_KEY);
   },
   async saveTokens(accessToken: string, refreshToken: string): Promise<void> {
-    await AsyncStorage.setMany({ [ACCESS_KEY]: accessToken, [REFRESH_KEY]: refreshToken });
+    await AsyncStorage.multiSet([
+      [ACCESS_KEY, accessToken],
+      [REFRESH_KEY, refreshToken],
+    ]);
   },
   async saveUser(user: unknown): Promise<void> {
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -32,7 +35,7 @@ export const TokenStore = {
     return raw ? (JSON.parse(raw) as T) : null;
   },
   async clear(): Promise<void> {
-    await AsyncStorage.removeMany([ACCESS_KEY, REFRESH_KEY, USER_KEY]);
+    await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, USER_KEY]);
   },
 };
 
@@ -85,41 +88,64 @@ export const api = {
   delete: <T = any>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
-// ─── Auth-specific client (unauthenticated calls, or that manage tokens) ──────
-type AuthUser = {
-  id: string;
-  fullName: string;
-  email: string;
-  phone?: string;
-  role: "LANDLORD" | "RENTER";
-  landlordCode?: string;
-  landlord?: string;
-  isVerified: boolean;
-};
+// ─── Auth is handled entirely by Clerk. ─────────────────────────────────────
+// Use @clerk/expo hooks (useSignUp, useSignIn, useAuth, useUser) in components.
+// The api/authApi helpers below are kept only for non-auth data endpoints.
 
-export const authApi = {
-  registerLandlord: (payload: { fullName: string; email: string; password: string; phone?: string }) =>
-    request<{ message: string }>("/api/auth/register/landlord", { method: "POST", body: payload, auth: false }),
+// ─── Sync authenticated user to MongoDB ──────────────────────────────────────
+// Called after Clerk sign-in / sign-up completes.
+// `getToken` is the function returned by Clerk's useAuth() hook.
+// Returns the stored user document on success, or null on failure (non-fatal).
+export async function syncUserWithDB(
+  getToken: () => Promise<string | null>,
+  payload: {
+    clerkId: string;
+    fullName: string;
+    username: string;
+    email: string;
+    password: string;
+    role: "LANDLORD" | "RENTER";
+    landlordCode?: string; // renter only
+  }
+): Promise<unknown | null> {
+  try {
+    const token = await getToken();
+    if (!token) return null;
 
-  registerRenter: (payload: {
-    fullName: string; email: string; password: string; phone?: string; landlordCode: string;
-  }) =>
-    request<{ message: string }>("/api/auth/register/renter", { method: "POST", body: payload, auth: false }),
+    const endpoint =
+      payload.role === "LANDLORD"
+        ? "/api/auth/register/landlord"
+        : "/api/auth/register/renter";
 
-  sendOtp: (email: string) =>
-    request<{ message: string }>("/api/auth/otp/send", { method: "POST", body: { email }, auth: false }),
+    const body: Record<string, string> = {
+      clerkId: payload.clerkId,
+      fullName: payload.fullName,
+      username: payload.username,
+      email: payload.email,
+      password: payload.password,
+    };
+    if (payload.role === "RENTER" && payload.landlordCode) {
+      body.landlordCode = payload.landlordCode;
+    }
 
-  verifyOtp: (email: string, otp: string) =>
-    request<{ accessToken: string; refreshToken: string; user: AuthUser }>(
-      "/api/auth/otp/verify",
-      { method: "POST", body: { email, otp }, auth: false }
-    ),
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
 
-  login: (email: string, password: string) =>
-    request<{ accessToken: string; refreshToken: string; user: AuthUser }>(
-      "/api/auth/login",
-      { method: "POST", body: { email, password }, auth: false }
-    ),
-
-  me: () => request<{ user: AuthUser }>("/api/auth/me", { method: "GET" }),
-};
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      console.warn("[syncUserWithDB] backend error:", json?.error?.message ?? res.status);
+      return null;
+    }
+    return json?.data?.user ?? null;
+  } catch (err) {
+    console.warn("[syncUserWithDB] network error:", err);
+    return null;
+  }
+}

@@ -9,6 +9,15 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withDelay, withSpring, Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+// useSignUp must come from @clerk/expo/legacy — it returns the legacy
+// { isLoaded, signUp, setActive } shape needed for custom sign-up flows.
+// The non-legacy useSignUp from @clerk/expo returns a Signal-based API
+// { errors, fetchStatus, signUp } with no isLoaded or setActive — that is
+// only for Clerk's prebuilt components, not custom flows.
+// useAuth stays on the main path; it is a separate hook with no conflict.
+import { useSignUp } from "@clerk/expo/legacy";
+import { useAuth } from "@clerk/expo";
+import { syncUserWithDB } from "../constants/api";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const BRAND_BLUE = "#1A3C5E";
@@ -27,34 +36,34 @@ type Role = "landlord" | "renter";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Generate a 6-character uppercase alphanumeric code (no ambiguous O/0/I/1). */
+/** Generate a 6-character uppercase alphanumeric landlord code. */
 function generateLandlordCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-
-/** Generate a random 6-digit OTP. */
-function generateOtp(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
 
-/** Password strength: 0–4 */
-function getPasswordStrength(pw: string): number {
-  let score = 0;
-  if (pw.length >= 8)  score++;
-  if (pw.length >= 12) score++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-  return Math.min(score, 4);
+// Split a full name into firstName / lastName for Clerk
+function splitName(full: string): { firstName: string; lastName: string } {
+  const parts = full.trim().split(/\s+/);
+  const firstName = parts[0] ?? "";
+  const lastName  = parts.slice(1).join(" ") || " "; // Clerk requires non-empty lastName
+  return { firstName, lastName };
 }
 
-const STRENGTH_LABELS = ["", "Weak", "Fair", "Good", "Strong"];
-const STRENGTH_COLORS = ["", ERROR_RED, WARNING, ACCENT, SUCCESS];
+// Normalise Clerk error messages for display
+function clerkMsg(err: unknown): string {
+  const e = err as any;
+  return (
+    e?.errors?.[0]?.longMessage ??
+    e?.errors?.[0]?.message ??
+    e?.message ??
+    "Something went wrong. Please try again."
+  );
+}
 
 // ─── Step progress bar ───────────────────────────────────────────────────────
 function StepBar({ total, current, color }: { total: number; current: number; color: string }) {
@@ -117,39 +126,57 @@ const otp = StyleSheet.create({
   digit:     { fontSize: 22, fontWeight: "800", color: WHITE, letterSpacing: 1 },
 });
 
+// ─── Main Screen ─────────────────────────────────────────────────────────────
 export default function RegisterScreen() {
   const router    = useRouter();
   const { width } = useWindowDimensions();
   const insets    = useSafeAreaInsets();
   const kavOffset = Platform.OS === "android" ? insets.top : 0;
 
+  const { signUp, setActive, isLoaded } = useSignUp();
+  const { getToken } = useAuth();
+
+  // Guard against calling state setters on an unmounted component.
+  // animForm uses a 155 ms setTimeout; if navigation fires before it resolves
+  // (e.g. renter OTP success → router.replace) the callback would run after
+  // the component has unmounted, causing a React state-update-on-unmounted
+  // component warning and potentially another hooks count mismatch.
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => { isMounted.current = false; };
+  }, []);
+
   const [role, setRole] = useState<Role>("landlord");
   const [step, setStep] = useState(1);
 
+  // Personal fields
   const [fullName,    setFN]   = useState("");
+  const [username,    setUN]   = useState("");
   const [email,       setEM]   = useState("");
-  const [phone,       setPH]   = useState("");
   const [password,    setPW]   = useState("");
   const [confirmPass, setCP]   = useState("");
   const [passVis,     setPVis] = useState(false);
   const [confVis,     setCVis] = useState(false);
 
-  // Landlord OTP state
+  // Email verification (Clerk OTP)
   const [otpValue,     setOtpValue]  = useState("");
-  const [otpSecret,    setOtpSecret] = useState("");
-  const [otpStatus,    setOtpStatus] = useState<"idle"|"sending"|"verifying"|"verified"|"error">("idle");
+  const [otpStatus,    setOtpStatus] = useState<"idle" | "verifying" | "verified" | "error">("idle");
   const [otpCountdown, setCountdown] = useState(0);
-  const [generatedCode, setCode]     = useState("");
+
+  // Landlord success-code display
+  const [generatedCode, setCode]   = useState("");
+  const [copied,        setCopied] = useState(false);
 
   // Renter landlord-key state
   const [landlordKey, setLK] = useState("");
-  const [keyStatus,   setKS] = useState<"idle"|"checking"|"valid"|"invalid">("idle");
+  const [keyStatus,   setKS] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
 
-  const [focused,    setFoc] = useState<string | null>(null);
-  const [errors,     setErr] = useState<Record<string, string>>({});
-  const [submitting, setSub] = useState(false);
-  const [copied, setCopied]  = useState(false);
+  const [focused,     setFoc] = useState<string | null>(null);
+  const [errors,      setErr] = useState<Record<string, string>>({});
+  const [submitting,  setSub] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
+  // ── Animations ───────────────────────────────────────────────────────────
   const pillX  = useSharedValue(0);
   const pageOp = useSharedValue(0);
   const pageTY = useSharedValue(24);
@@ -163,6 +190,7 @@ export default function RegisterScreen() {
     formTY.value = withDelay(200, withTiming(0, { duration: 500, easing: Easing.out(Easing.cubic) }));
   }, []);
 
+  // OTP countdown ticker
   useEffect(() => {
     if (otpCountdown <= 0) return;
     const t = setTimeout(() => setCountdown(c => c - 1), 1000);
@@ -177,6 +205,7 @@ export default function RegisterScreen() {
     formOp.value = withTiming(0, { duration: 140 });
     formTY.value = withTiming(10, { duration: 140 });
     setTimeout(() => {
+      if (!isMounted.current) return;
       cb();
       formOp.value = withTiming(1, { duration: 350 });
       formTY.value = withTiming(0, { duration: 350, easing: Easing.out(Easing.cubic) });
@@ -193,118 +222,160 @@ export default function RegisterScreen() {
   };
 
   const clearAll = () => {
-    setFN(""); setEM(""); setPH(""); setPW(""); setCP("");
-    setLK(""); setKS("idle"); setErr({});
+    setFN(""); setUN(""); setEM(""); setPW(""); setCP("");
+    setLK(""); setKS("idle"); setErr({}); setSubmitError("");
     setPVis(false); setCVis(false);
-    setOtpValue(""); setOtpSecret(""); setOtpStatus("idle"); setCountdown(0);
+    setOtpValue(""); setOtpStatus("idle"); setCountdown(0);
     setCode(""); setCopied(false);
   };
 
   // ── Validation ──────────────────────────────────────────────────────────────
   const validatePersonal = (): boolean => {
     const e: Record<string, string> = {};
-    if (!fullName.trim())             e.fullName    = "Full name is required.";
-    if (!isValidEmail(email))         e.email       = "Enter a valid email address.";
-    if (phone && phone.length < 7)    e.phone       = "Enter a valid phone number.";
-    if (password.length < 8)          e.password    = "Password must be at least 8 characters.";
-    else if (!/[A-Z]/.test(password)) e.password    = "Password must contain an uppercase letter.";
-    else if (!/[0-9]/.test(password)) e.password    = "Password must contain at least one number.";
-    if (password !== confirmPass)     e.confirmPass = "Passwords do not match.";
+    if (!fullName.trim())                           e.fullName = "Full name is required.";
+    if (!username.trim())                           e.username = "Username is required.";
+    else if (!/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()))
+                                                    e.username = "3–20 chars, letters, numbers and underscores only.";
+    if (!isValidEmail(email))                       e.email       = "Enter a valid email address.";
+    if (!password)                                  e.password    = "Password is required.";
+    if (password !== confirmPass)                   e.confirmPass = "Passwords do not match.";
     setErr(e);
     return Object.keys(e).length === 0;
   };
 
-  // ── Landlord step 1 → register on backend + send OTP ─────────────────────────
-  const handleLandlordStep1 = async () => {
+  // ── Create Clerk sign-up + send verification email ──────────────────────────
+  // Called from landlord step 1 and renter step 2 — next step is always the OTP screen.
+  const handleStep1 = async () => {
     if (!validatePersonal()) return;
+    // isLoaded is false during Clerk initialisation AND after setActive completes
+    // (Clerk v4: sign-up is unavailable when a session already exists). In both
+    // cases we simply block silently — the button is already visually disabled
+    // via `submitting`. Never show a user-visible error for this internal state.
+    if (!isLoaded || !signUp) return;
     setSub(true);
     setErr({});
+    setSubmitError("");
     try {
-      const { authApi } = await import("../constants/api");
-      const res = await authApi.registerLandlord({ fullName, email, password, phone: phone || undefined });
-      if (!res.success) {
-        setErr({ email: res.error?.message ?? "Registration failed." });
-        return;
-      }
-      // Backend sends OTP; store email for verify step
-      setOtpValue("");
-      setOtpStatus("idle");
+      const { firstName, lastName } = splitName(fullName);
+      await signUp!.create({
+        firstName,
+        lastName,
+        username: username.trim().toLowerCase(),
+        emailAddress: email.trim().toLowerCase(),
+        password,
+        unsafeMetadata: {
+          role,
+          ...(role === "renter" ? { landlordCode: landlordKey } : {}),
+        },
+      });
+      await signUp!.prepareEmailAddressVerification({ strategy: "email_code" });
       setCountdown(60);
-      animForm(() => setStep(2));
-    } catch {
-      setErr({ email: "Network error — is the server running?" });
+      animForm(() => setStep(role === "landlord" ? 2 : 3));
+    } catch (err: any) {
+      // Surface field-specific errors under the relevant field,
+      // and everything else in the banner above the button.
+      const msg = clerkMsg(err);
+      const code = err?.errors?.[0]?.code ?? "";
+      if (code === "form_identifier_exists" || code.includes("email")) {
+        setErr({ email: msg });
+      } else {
+        setSubmitError(msg);
+      }
     } finally {
       setSub(false);
     }
   };
 
-  // ── Landlord step 2 → verify OTP via backend ─────────────────────────────────
+  // ── STEP 2 → Verify the Clerk email code ────────────────────────────────────
   const handleVerifyOtp = async () => {
-    const e: Record<string, string> = {};
-    if (otpValue.length < 6) { e.otp = "Enter the full 6-digit code."; setErr(e); return; }
+    if (otpValue.length < 6) { setErr({ otp: "Enter the full 6-digit code." }); return; }
+    if (!isLoaded) return;
     setOtpStatus("verifying");
     setErr({});
     try {
-      const { authApi, TokenStore } = await import("../constants/api");
-      const res = await authApi.verifyOtp(email, otpValue);
-      if (!res.success || !res.data) {
+      const result = await signUp!.attemptEmailAddressVerification({ code: otpValue });
+      if (result.status === "complete") {
+        // Activate the new session immediately
+        await setActive!({ session: result.createdSessionId });
+        setOtpStatus("verified");
+
+        // Sync the newly authenticated user to MongoDB.
+        // createdUserId is the Clerk user id available on the completed sign-up.
+        const clerkId = result.createdUserId ?? signUp?.createdUserId ?? "";
+        await syncUserWithDB(
+          () => getToken(),
+          {
+            clerkId,
+            fullName,
+            username: username.trim().toLowerCase(),
+            email: email.trim().toLowerCase(),
+            password,
+            role: role === "landlord" ? "LANDLORD" : "RENTER",
+            ...(role === "renter" ? { landlordCode: landlordKey.toUpperCase() } : {}),
+          }
+        );
+
+        if (role === "landlord") {
+          // Generate a landlord invite code (stored in Clerk publicMetadata via webhook
+          // or can be read from dashboard — for now we show it client-side)
+          setCode(generateLandlordCode());
+          animForm(() => setStep(3));
+        } else {
+          // Defer navigation by one tick so Clerk's session propagation and
+          // any in-flight re-renders finish before we push a new route.
+          // Navigating synchronously right after setActive can cause React to
+          // see a different hook count between renders ("Rendered fewer hooks
+          // than expected") because the auth state change triggers upstream
+          // re-renders concurrently with the route transition.
+          setTimeout(() => router.replace("/renter/dashboard"), 0);
+        }
+      } else {
+        // result.status === "missing_requirements" means Clerk still needs more
+        // fields before the sign-up can be completed (e.g. phone number required
+        // in the Dashboard). Log details to help diagnose the configuration.
+        const missing = (result as any).missingFields ?? [];
+        const required = (result as any).requiredFields ?? [];
+        console.warn(
+          "[OTP] Sign-up not complete. status:", result.status,
+          "| missingFields:", missing,
+          "| requiredFields:", required,
+        );
         setOtpStatus("error");
-        setErr({ otp: res.error?.message ?? "Incorrect code." });
-        return;
+        if (missing.length > 0) {
+          setErr({ otp: `Additional info required: ${missing.join(", ")}. Please contact support.` });
+        } else {
+          setErr({ otp: "Email verified but sign-up could not be completed. Please check your Clerk dashboard configuration." });
+        }
       }
-      await TokenStore.saveTokens(res.data.accessToken, res.data.refreshToken);
-      await TokenStore.saveUser(res.data.user);
-      setOtpStatus("verified");
-      // Show landlord code from the registered user
-      const code = res.data.user.landlordCode ?? generateLandlordCode();
-      setCode(code);
-      animForm(() => setStep(3));
-    } catch {
+    } catch (err) {
       setOtpStatus("error");
-      setErr({ otp: "Network error — is the server running?" });
+      setErr({ otp: clerkMsg(err) });
     }
   };
 
+  // ── Resend code via Clerk ────────────────────────────────────────────────────
   const handleResendOtp = async () => {
-    if (otpCountdown > 0) return;
+    if (otpCountdown > 0 || !isLoaded) return;
     setOtpValue("");
     setOtpStatus("idle");
     setErr({});
     setCountdown(60);
     try {
-      const { authApi } = await import("../constants/api");
-      await authApi.sendOtp(email);
-    } catch {
-      console.warn("[RESEND OTP] Network error");
+      await signUp!.prepareEmailAddressVerification({ strategy: "email_code" });
+    } catch (err) {
+      console.warn("[RESEND OTP]", clerkMsg(err));
     }
   };
 
   // ── Renter flow ──────────────────────────────────────────────────────────────
-  const verifyLandlordKey = async (): Promise<boolean> => {
-    if (landlordKey.length < 6) { setErr({ landlordKey: "Enter the full 6-character landlord code." }); return false; }
-    // Actual validation happens during registerRenter — just a length pre-check here
-    setKS("valid"); setErr({});
-    return true;
-  };
-
-  const handleRenterStep1 = async () => { const ok = await verifyLandlordKey(); if (ok) animForm(() => setStep(2)); };
-  const handleRenterStep2 = async () => {
-    if (!validatePersonal()) return;
-    setSub(true);
-    setErr({});
-    try {
-      const { authApi } = await import("../constants/api");
-      const res = await authApi.registerRenter({ fullName, email, password, phone: phone || undefined, landlordCode: landlordKey });
-      if (!res.success) {
-        setErr({ email: res.error?.message ?? "Registration failed." });
-        return;
-      }
-      router.replace("/login");
-    } catch {
-      setErr({ email: "Network error — is the server running?" });
-    } finally {
-      setSub(false);
+  const handleRenterStep1 = async () => {
+    if (landlordKey.length < 6) {
+      setErr({ landlordKey: "Enter the full 6-character landlord code." });
+      return;
     }
+    setKS("valid");
+    setErr({});
+    animForm(() => setStep(2));
   };
 
   const handleCopy = () => {
@@ -312,8 +383,6 @@ export default function RegisterScreen() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
-
-  const strength = getPasswordStrength(password);
 
   // ─── Field renderer ──────────────────────────────────────────────────────────
   const fld = (
@@ -353,26 +422,16 @@ export default function RegisterScreen() {
   );
 
   const personalForm = () => (<>
-    {fld("Full name",        "👤", "fullName",    fullName,    setFN,  { ph: "Your full name",                                                                        caps: "words" })}
+    {fld("Full name",        "👤", "fullName",    fullName,    setFN,  { ph: "Your full name", caps: "words" })}
+    {fld("Username",         "@",  "username",    username,    setUN,  { ph: "e.g. john_doe", caps: "none" })}
     {fld("Email address",    "✉",  "email",       email,       setEM,  { ph: role === "landlord" ? "landlord@example.com" : "renter@example.com", kb: "email-address", caps: "none" })}
-    {fld("Phone number",     "📱", "phone",       phone,       setPH,  { ph: "+1 555 000 0000",                                                                       kb: "phone-pad", caps: "none" })}
-    {fld("Password",         "🔒", "password",    password,    setPW,  { ph: "Min. 8 chars, 1 uppercase & 1 number", secure: true, vis: passVis, togVis: () => setPVis(v => !v), caps: "none" })}
-    {password.length > 0 && (
-      <View style={s.strengthRow}>
-        {[1, 2, 3, 4].map(i => (
-          <View key={i} style={[s.strengthSeg, { backgroundColor: strength >= i ? STRENGTH_COLORS[strength] : WHITE_15 }]} />
-        ))}
-        <Text style={[s.strengthLabel, { color: STRENGTH_COLORS[strength] }]}>
-          {STRENGTH_LABELS[strength]}
-        </Text>
-      </View>
-    )}
+    {fld("Password",         "🔒", "password",    password,    setPW,  { ph: "Enter a password", secure: true, vis: passVis, togVis: () => setPVis(v => !v), caps: "none" })}
     {fld("Confirm password", "🔒", "confirmPass", confirmPass, setCP,  { ph: "Re-enter password", secure: true, vis: confVis, togVis: () => setCVis(v => !v), caps: "none" })}
   </>);
 
   const content = () => {
 
-    // ── LANDLORD STEP 1: Personal details ────────────────────────────────────
+    // ── LANDLORD STEP 1: Personal details ─────────────────────────────────────
     if (role === "landlord" && step === 1) return (<>
       <View style={[s.chip, { backgroundColor: "rgba(59,111,168,0.15)", borderColor: LANDLORD_C + "44" }]}>
         <View style={[s.chipDot, { backgroundColor: LANDLORD_C }]} />
@@ -383,9 +442,10 @@ export default function RegisterScreen() {
         Fill in your information. You'll then verify your email with a one-time code before your account is created.
       </Text>
       {personalForm()}
+      {!!submitError && <Text style={s.submitErr}>⚠ {submitError}</Text>}
       <TouchableOpacity
         style={[s.btn, { backgroundColor: LANDLORD_C }, submitting && s.btnOff]}
-        onPress={handleLandlordStep1}
+        onPress={handleStep1}
         activeOpacity={0.88}
         disabled={submitting}
       >
@@ -395,7 +455,7 @@ export default function RegisterScreen() {
       </TouchableOpacity>
     </>);
 
-    // ── LANDLORD STEP 2: Email OTP verification ──────────────────────────────
+    // ── LANDLORD STEP 2: Email OTP verification ────────────────────────────────
     if (role === "landlord" && step === 2) return (<>
       <View style={[s.chip, { backgroundColor: "rgba(59,111,168,0.15)", borderColor: LANDLORD_C + "44" }]}>
         <View style={[s.chipDot, { backgroundColor: LANDLORD_C }]} />
@@ -446,7 +506,7 @@ export default function RegisterScreen() {
       </Text>
     </>);
 
-    // ── LANDLORD STEP 3: Success + unique landlord code ──────────────────────
+    // ── LANDLORD STEP 3: Success + unique landlord code ───────────────────────
     if (role === "landlord" && step === 3) return (<>
       <View style={s.successWrap}><Text style={s.successEmoji}>🎉</Text></View>
       <Text style={s.sh}>Account Created!</Text>
@@ -473,14 +533,14 @@ export default function RegisterScreen() {
       ))}
       <TouchableOpacity
         style={[s.btn, { backgroundColor: LANDLORD_C, marginTop: 20 }]}
-        onPress={() => router.replace("/login")}
+        onPress={() => router.replace("/landlord/dashboard")}
         activeOpacity={0.88}
       >
-        <Text style={s.btnTxt}>Go to Sign In</Text>
+        <Text style={s.btnTxt}>Go to Dashboard</Text>
       </TouchableOpacity>
     </>);
 
-    // ── RENTER STEP 1: Landlord code ─────────────────────────────────────────
+    // ── RENTER STEP 1: Landlord code ──────────────────────────────────────────
     if (role === "renter" && step === 1) return (<>
       <View style={[s.chip, { backgroundColor: "rgba(74,144,217,0.12)", borderColor: ACCENT + "44" }]}>
         <View style={[s.chipDot, { backgroundColor: ACCENT }]} />
@@ -514,7 +574,7 @@ export default function RegisterScreen() {
         {errors.landlordKey
           ? <Text style={s.errTxt}>⚠ {errors.landlordKey}</Text>
           : keyStatus === "valid"
-          ? <Text style={s.okTxt}>✓  Code verified — landlord found.</Text>
+          ? <Text style={s.okTxt}>✓  Code accepted — proceeding to registration.</Text>
           : null}
       </View>
       <View style={s.kbRow}>
@@ -526,18 +586,15 @@ export default function RegisterScreen() {
       </View>
       <Text style={s.kHint}>Don't have a code? Ask your landlord to share their heyTenant invite code.</Text>
       <TouchableOpacity
-        style={[s.btn, { backgroundColor: keyStatus === "valid" ? ACCENT : "rgba(74,144,217,0.38)" }, keyStatus === "checking" && s.btnOff]}
+        style={[s.btn, { backgroundColor: keyStatus === "valid" ? ACCENT : "rgba(74,144,217,0.38)" }]}
         onPress={handleRenterStep1}
         activeOpacity={0.88}
-        disabled={keyStatus === "checking"}
       >
-        {keyStatus === "checking"
-          ? <ActivityIndicator color={WHITE} />
-          : <Text style={s.btnTxt}>Verify &amp; Continue  →</Text>}
+        <Text style={s.btnTxt}>Verify &amp; Continue  →</Text>
       </TouchableOpacity>
     </>);
 
-    // ── RENTER STEP 2: Personal details ──────────────────────────────────────
+    // ── RENTER STEP 2: Personal details ───────────────────────────────────────
     if (role === "renter" && step === 2) return (<>
       <View style={s.linkedBadge}>
         <Text style={s.lbIc}>🔗</Text>
@@ -549,23 +606,88 @@ export default function RegisterScreen() {
       <Text style={s.sh}>Your details</Text>
       <Text style={s.ss}>Complete your profile to finish creating your tenant account.</Text>
       {personalForm()}
+      {!!submitError && <Text style={s.submitErr}>⚠ {submitError}</Text>}
       <TouchableOpacity
         style={[s.btn, { backgroundColor: ACCENT }, submitting && s.btnOff]}
-        onPress={handleRenterStep2}
+        onPress={handleStep1}
         activeOpacity={0.88}
         disabled={submitting}
       >
         {submitting
           ? <ActivityIndicator color={WHITE} />
-          : <Text style={s.btnTxt}>Create Tenant Account  →</Text>}
+          : <Text style={s.btnTxt}>Continue — Verify Email  →</Text>}
       </TouchableOpacity>
+    </>);
+
+    // ── RENTER STEP 3: Email OTP verification ─────────────────────────────────
+    if (role === "renter" && step === 3) return (<>
+      <View style={[s.chip, { backgroundColor: "rgba(74,144,217,0.12)", borderColor: ACCENT + "44" }]}>
+        <View style={[s.chipDot, { backgroundColor: ACCENT }]} />
+        <Text style={[s.chipTxt, { color: ACCENT }]}>Email verification</Text>
+      </View>
+      <Text style={s.sh}>Check your inbox</Text>
+      <Text style={s.ss}>
+        We sent a 6-digit verification code to{"\n"}
+        <Text style={{ color: WHITE, fontWeight: "700" }}>{email}</Text>.{"\n"}
+        Enter it below to confirm it's really you.
+      </Text>
+      <View style={s.fg}>
+        <Text style={s.fl}>Verification code</Text>
+        <OtpInput
+          value={otpValue}
+          onChange={(v) => { setOtpValue(v); setOtpStatus("idle"); setErr({}); }}
+          accent={ACCENT}
+        />
+        {errors.otp
+          ? <Text style={[s.errTxt, { textAlign: "center", marginTop: 8 }]}>⚠ {errors.otp}</Text>
+          : otpStatus === "verified"
+          ? <Text style={[s.okTxt, { textAlign: "center", marginTop: 8 }]}>✓  Email verified</Text>
+          : null}
+      </View>
+      <View style={s.resendRow}>
+        <Text style={s.resendHint}>Didn't receive it?  </Text>
+        <TouchableOpacity onPress={handleResendOtp} disabled={otpCountdown > 0} activeOpacity={0.7}>
+          <Text style={[s.resendLink, otpCountdown > 0 && { color: WHITE_40 }]}>
+            {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : "Resend code"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <TouchableOpacity
+        style={[s.btn, { backgroundColor: ACCENT }, otpStatus === "verifying" && s.btnOff]}
+        onPress={handleVerifyOtp}
+        activeOpacity={0.88}
+        disabled={otpStatus === "verifying"}
+      >
+        {otpStatus === "verifying"
+          ? <ActivityIndicator color={WHITE} />
+          : <Text style={s.btnTxt}>Verify &amp; Create Account  →</Text>}
+      </TouchableOpacity>
+      <Text style={[s.kHint, { marginTop: 16 }]}>
+        Wrong email?{" "}
+        <Text style={{ color: ACCENT, fontWeight: "600" }} onPress={() => animForm(() => setStep(2))}>
+          Go back
+        </Text>{" "}to correct it.
+      </Text>
     </>);
 
     return null;
   };
 
-  const totalSteps  = role === "landlord" ? 3 : 2;
+  // Step count: landlord = 3 steps (details → OTP → success), renter = 3 (code → details → OTP)
+  const totalSteps  = 3;
   const showStepBar = !(role === "landlord" && step === 3);
+
+  // Back button logic
+  const handleBack = () => {
+    if (role === "landlord") {
+      if (step === 2) animForm(() => setStep(1));
+      else router.back();
+    } else {
+      if (step === 3) animForm(() => setStep(2));
+      else if (step === 2) animForm(() => setStep(1));
+      else router.back();
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -584,7 +706,7 @@ export default function RegisterScreen() {
         <Animated.View style={pageStyle}>
           <TouchableOpacity
             style={[s.back, { marginTop: Math.max(insets.top + 12, 44) }]}
-            onPress={() => { if (step === 2) animForm(() => setStep(1)); else router.back(); }}
+            onPress={handleBack}
             activeOpacity={0.7}
           >
             <Text style={s.backArrow}>←</Text>
@@ -638,88 +760,98 @@ export default function RegisterScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: BRAND_BLUE },
+  root:  { flex: 1, backgroundColor: BRAND_BLUE },
   scroll: { flexGrow: 1, paddingHorizontal: 24 },
-  orb1:   { position: "absolute", backgroundColor: "rgba(74,144,217,0.09)" },
-  orb2:   { position: "absolute", backgroundColor: "rgba(74,144,217,0.06)" },
+  orb1:  { position: "absolute", backgroundColor: "rgba(74,144,217,0.08)" },
+  orb2:  { position: "absolute", backgroundColor: "rgba(74,144,217,0.05)" },
 
-  back:      { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8, alignSelf: "flex-start" },
+  back:      { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
   backArrow: { fontSize: 18, color: WHITE_72 },
-  backTxt:   { fontSize: 14, color: WHITE_72, fontWeight: "500" },
+  backTxt:   { fontSize: 14, color: WHITE_72 },
 
-  header:   { alignItems: "center", paddingTop: 12, paddingBottom: 20 },
-  logoOut:  { width: 68, height: 68, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 14 },
-  logoIn:   { width: 54, height: 54, borderRadius: 13, backgroundColor: WHITE, alignItems: "center", justifyContent: "center" },
-  logoTxt:  { fontSize: 20, fontWeight: "800", color: BRAND_BLUE, letterSpacing: -1 },
+  header:   { alignItems: "center", paddingTop: 16, paddingBottom: 28 },
+  logoOut:  { width: 72, height: 72, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  logoIn:   { width: 58, height: 58, borderRadius: 14, backgroundColor: WHITE, alignItems: "center", justifyContent: "center" },
+  logoTxt:  { fontSize: 22, fontWeight: "800", color: BRAND_BLUE, letterSpacing: -1 },
   title:    { fontSize: 26, fontWeight: "700", color: WHITE, letterSpacing: 0.2, marginBottom: 4 },
-  subtitle: { fontSize: 13, color: WHITE_72, textAlign: "center" },
+  subtitle: { fontSize: 13, color: WHITE_72, letterSpacing: 0.3, textAlign: "center" },
 
-  tabTrack: { flexDirection: "row", backgroundColor: WHITE_08, borderWidth: 1, borderColor: WHITE_15, borderRadius: 16, padding: 4, marginBottom: 20, position: "relative" },
-  tabPill:  { position: "absolute", top: 4, left: 4, bottom: 4, width: "50%", borderRadius: 12 },
-  tabBtn:   { flex: 1, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, zIndex: 1 },
-  tabLbl:   { fontSize: 14, fontWeight: "600", color: WHITE_40, letterSpacing: 0.2 },
+  tabTrack: { flexDirection: "row", backgroundColor: WHITE_08, borderRadius: 14, padding: 4, marginBottom: 20, position: "relative", overflow: "hidden" },
+  tabPill:  { position: "absolute", top: 4, left: 4, width: "50%", bottom: 4, borderRadius: 11 },
+  tabBtn:   { flex: 1, paddingVertical: 10, alignItems: "center" },
+  tabLbl:   { fontSize: 13, fontWeight: "600", color: WHITE_40 },
   tabLblOn: { color: WHITE },
 
-  chip:    { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 6, marginBottom: 18, alignSelf: "flex-start" },
+  chip:    { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 18, gap: 7 },
   chipDot: { width: 6, height: 6, borderRadius: 3 },
-  chipTxt: { fontSize: 12, fontWeight: "600", letterSpacing: 0.2 },
+  chipTxt: { fontSize: 12, fontWeight: "600" },
 
-  sh: { fontSize: 20, fontWeight: "700", color: WHITE, marginBottom: 6, letterSpacing: 0.1 },
-  ss: { fontSize: 13, color: WHITE_72, lineHeight: 20, marginBottom: 22 },
+  sh: { fontSize: 20, fontWeight: "700", color: WHITE, marginBottom: 6 },
+  ss: { fontSize: 13, color: WHITE_72, lineHeight: 20, marginBottom: 20 },
 
-  fg:   { marginBottom: 14 },
-  fl:   { fontSize: 12, fontWeight: "600", color: WHITE_72, letterSpacing: 0.3, marginBottom: 7 },
-  iw:   { flexDirection: "row", alignItems: "center", backgroundColor: WHITE_08, borderWidth: 1, borderColor: WHITE_15, borderRadius: 14, paddingHorizontal: 14, height: 52, gap: 10 },
-  iFoc: { borderColor: ACCENT, backgroundColor: "rgba(74,144,217,0.08)" },
-  iErr: { borderColor: ERROR_RED, backgroundColor: "rgba(248,113,113,0.07)" },
-  iOk:  { borderColor: SUCCESS, backgroundColor: "rgba(34,197,94,0.07)" },
-  iIc:  { fontSize: 14, color: WHITE_40, width: 18, textAlign: "center" },
-  inp:  { flex: 1, fontSize: 15, color: WHITE, alignSelf: "center", paddingVertical: 0 },
-  keyInp: { fontSize: 18, fontWeight: "700", letterSpacing: 5 },
-  eye:    { paddingLeft: 6, paddingVertical: 4 },
-  eyeTxt: { fontSize: 12, fontWeight: "600" },
+  fg:  { marginBottom: 14 },
+  fl:  { fontSize: 12, fontWeight: "600", color: WHITE_72, marginBottom: 6, letterSpacing: 0.3 },
+  iw:  { flexDirection: "row", alignItems: "center", backgroundColor: WHITE_08, borderWidth: 1, borderColor: WHITE_15, borderRadius: 14, paddingHorizontal: 14, height: 52 },
+  iFoc:{ borderColor: ACCENT },
+  iErr:{ borderColor: ERROR_RED },
+  iOk: { borderColor: SUCCESS },
+  iIc: { fontSize: 16, marginRight: 10 },
+  inp: { flex: 1, color: WHITE, fontSize: 15, paddingVertical: 0 },
+  eye: { paddingHorizontal: 4 },
+  eyeTxt: { fontSize: 13, fontWeight: "600" },
+  errTxt:    { fontSize: 12, color: ERROR_RED, marginTop: 5 },
+  submitErr: {
+    fontSize: 13,
+    color: ERROR_RED,
+    backgroundColor: "rgba(248,113,113,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.25)",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 10,
+    lineHeight: 18,
+  },
+  okTxt:  { fontSize: 12, color: SUCCESS,   marginTop: 5 },
+  okIc:   { fontSize: 16, color: SUCCESS,   marginLeft: 4 },
+  errIc:  { fontSize: 16, color: ERROR_RED, marginLeft: 4 },
 
-  strengthRow:   { flexDirection: "row", alignItems: "center", gap: 5, marginTop: -8, marginBottom: 14 },
-  strengthSeg:   { flex: 1, height: 3, borderRadius: 2 },
-  strengthLabel: { fontSize: 11, fontWeight: "600", minWidth: 42, textAlign: "right" },
+  keyInp: { letterSpacing: 6, fontWeight: "800", textTransform: "uppercase" },
 
-  errTxt: { marginTop: 5, fontSize: 11, color: ERROR_RED },
-  okTxt:  { marginTop: 5, fontSize: 11, color: SUCCESS, fontWeight: "500" },
-  okIc:   { fontSize: 16, color: SUCCESS, fontWeight: "700" },
-  errIc:  { fontSize: 16, color: ERROR_RED, fontWeight: "700" },
+  kbRow: { flexDirection: "row", gap: 8, justifyContent: "center", marginBottom: 14 },
+  kb:    { width: 40, height: 48, borderRadius: 10, borderWidth: 1.5, borderColor: WHITE_15, backgroundColor: WHITE_08, alignItems: "center", justifyContent: "center" },
+  kbC:   { fontSize: 18, fontWeight: "800", color: WHITE, letterSpacing: 1 },
 
-  resendRow:  { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 20, marginTop: 4 },
-  resendHint: { fontSize: 12, color: WHITE_40 },
-  resendLink: { fontSize: 12, fontWeight: "700", color: LANDLORD_C },
+  kHint: { fontSize: 12, color: WHITE_40, textAlign: "center", lineHeight: 18, marginBottom: 20 },
 
-  kbRow: { flexDirection: "row", gap: 8, marginBottom: 14, justifyContent: "center" },
-  kb:    { width: 42, height: 42, borderRadius: 10, borderWidth: 1.5, borderColor: WHITE_15, backgroundColor: WHITE_08, alignItems: "center", justifyContent: "center" },
-  kbC:   { fontSize: 16, fontWeight: "800", color: WHITE },
-  kHint: { fontSize: 12, color: WHITE_40, textAlign: "center", lineHeight: 18, marginBottom: 22 },
+  resendRow:  { flexDirection: "row", justifyContent: "center", alignItems: "center", marginBottom: 18 },
+  resendHint: { fontSize: 13, color: WHITE_40 },
+  resendLink: { fontSize: 13, color: ACCENT, fontWeight: "600" },
 
-  btn:    { borderRadius: 16, height: 56, alignItems: "center", justifyContent: "center", marginTop: 8 },
-  btnTxt: { fontSize: 15, fontWeight: "700", color: WHITE, letterSpacing: 0.3 },
+  btn:    { height: 54, borderRadius: 16, alignItems: "center", justifyContent: "center", marginTop: 4 },
   btnOff: { opacity: 0.55 },
+  btnTxt: { fontSize: 15, fontWeight: "700", color: WHITE, letterSpacing: 0.3 },
 
-  keyCard: { borderWidth: 1.5, borderRadius: 18, padding: 22, alignItems: "center", backgroundColor: WHITE_08, marginBottom: 18 },
-  kcLabel: { fontSize: 10, fontWeight: "700", color: WHITE_40, letterSpacing: 2.5, textTransform: "uppercase", marginBottom: 12 },
-  kcVal:   { fontSize: 36, fontWeight: "800", letterSpacing: 10, marginBottom: 14 },
-  kcDiv:   { width: "80%", height: 1, backgroundColor: WHITE_15, marginBottom: 12 },
-  kcCopy:  { fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
+  successWrap:  { alignItems: "center", marginBottom: 12 },
+  successEmoji: { fontSize: 48 },
 
-  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: WHITE_08, borderWidth: 1, borderColor: WHITE_15, borderRadius: 12, padding: 14, marginBottom: 10 },
-  infoIc:  { fontSize: 15, marginTop: 1 },
-  infoTxt: { flex: 1, fontSize: 12, color: WHITE_72, lineHeight: 18 },
+  keyCard:  { borderWidth: 1.5, borderRadius: 16, padding: 20, alignItems: "center", marginBottom: 20, backgroundColor: WHITE_08 },
+  kcLabel:  { fontSize: 10, color: WHITE_40, letterSpacing: 2, fontWeight: "600", marginBottom: 8 },
+  kcVal:    { fontSize: 36, fontWeight: "800", letterSpacing: 8, marginBottom: 12 },
+  kcDiv:    { height: 1, width: "100%", backgroundColor: WHITE_15, marginBottom: 12 },
+  kcCopy:   { fontSize: 12, fontWeight: "600" },
 
-  successWrap:  { alignItems: "center", marginBottom: 14 },
-  successEmoji: { fontSize: 52 },
-  linkedBadge: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1, borderColor: SUCCESS + "55", borderRadius: 14, padding: 14, backgroundColor: "rgba(34,197,94,0.07)", marginBottom: 20 },
-  lbIc:    { fontSize: 18, marginTop: 1 },
-  lbTitle: { fontSize: 13, fontWeight: "700", marginBottom: 2 },
-  lbSub:   { fontSize: 12, color: WHITE_72 },
-  lbKey:   { fontWeight: "800", letterSpacing: 2, color: WHITE },
+  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 12 },
+  infoIc:  { fontSize: 18, marginTop: 1 },
+  infoTxt: { flex: 1, fontSize: 13, color: WHITE_72, lineHeight: 19 },
 
-  footer:    { alignItems: "center", paddingTop: 24 },
+  linkedBadge: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "rgba(34,197,94,0.10)", borderWidth: 1, borderColor: "rgba(34,197,94,0.25)", borderRadius: 14, padding: 14, marginBottom: 20 },
+  lbIc:        { fontSize: 22 },
+  lbTitle:     { fontSize: 13, fontWeight: "700", marginBottom: 2 },
+  lbSub:       { fontSize: 12, color: WHITE_72 },
+  lbKey:       { fontWeight: "800", color: WHITE },
+
+  footer:    { alignItems: "center", paddingTop: 24, paddingBottom: 8 },
   footerTxt: { fontSize: 13, color: WHITE_40 },
   footerLnk: { fontWeight: "600" },
 });

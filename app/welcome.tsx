@@ -18,7 +18,8 @@ import Animated, {
   withSpring,
   Easing,
 } from "react-native-reanimated";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
 
 const BRAND_BLUE = "#1A3C5E";
 const ACCENT = "#4A90D9";
@@ -89,9 +90,15 @@ function FeatureCard({
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
+  // ── ALL hooks declared unconditionally FIRST ─────────────────────────────
+  // React's Rules of Hooks forbid calling hooks after a conditional return.
+  // Every useSharedValue / useAnimatedStyle / useEffect must be called on
+  // every render regardless of auth state, otherwise React sees a different
+  // hook count between renders and throws "Rendered fewer hooks than expected".
   const heroOpacity = useSharedValue(0);
   const heroTranslateY = useSharedValue(30);
   const badgeOpacity = useSharedValue(0);
@@ -164,6 +171,12 @@ export default function WelcomeScreen() {
   const handlePressOut = () => {
     buttonScale.value = withSpring(1, { damping: 15, stiffness: 300 });
   };
+
+  // Early return AFTER all hooks — redirects signed-in users to the index
+  // gate which will route them to the correct role-based dashboard.
+  if (isLoaded && isSignedIn) {
+    return <Redirect href="/" />;
+  }
 
   const handleGetStarted = () => {
     router.push("/login");

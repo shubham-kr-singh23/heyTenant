@@ -110,11 +110,16 @@ export default function SplashScreen({ onFinish }: SplashScreenProps) {
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: BRAND_BLUE,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 999,
+    zIndex: 9999,
+    elevation: 9999, // Android: ensures it renders above nav-bar chrome
   },
   logoWrapper: {
     marginBottom: 28,

@@ -22,7 +22,14 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+// useSignIn must come from @clerk/expo/legacy — it returns the legacy
+// { isLoaded, signIn, setActive } shape needed for custom sign-in flows.
+// The non-legacy useSignIn from @clerk/expo returns a Signal-based API with
+// no isLoaded or setActive — designed for Clerk's prebuilt components only.
+// useSSO and useAuth stay on the main path; they are separate hooks.
+import { useSignIn } from "@clerk/expo/legacy";
 import { useSSO, useAuth } from "@clerk/expo";
+import { API_URL } from "../constants/api";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 
@@ -69,7 +76,6 @@ export default function LoginScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  // KeyboardAvoidingView offset = status bar height on Android
   const kavOffset = Platform.OS === "android" ? insets.top : 0;
 
   const [role, setRole] = useState<Role>("renter");
@@ -78,10 +84,13 @@ export default function LoginScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [focused, setFocused] = useState<"email" | "password" | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
-  // -- Clerk Google SSO
+  // -- Clerk hooks
   const { startSSOFlow } = useSSO();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, getToken } = useAuth();
+  const { signIn, setActive, isLoaded } = useSignIn();
 
   // -- Entry animations
   const pageOpacity    = useSharedValue(0);
@@ -112,6 +121,7 @@ export default function LoginScreen() {
     setRole(next);
     setEmail("");
     setPassword("");
+    setLoginError("");
     const TAB_WIDTH = (width - 48 - 8) / 2;
     pillX.value = withSpring(next === "renter" ? 0 : TAB_WIDTH, {
       damping: 18,
@@ -130,13 +140,47 @@ export default function LoginScreen() {
   // -- Press handlers
   const handlePressIn  = () => { buttonScale.value = withSpring(0.97, { damping: 15, stiffness: 300 }); };
   const handlePressOut = () => { buttonScale.value = withSpring(1,    { damping: 15, stiffness: 300 }); };
-  const handleLogin    = () => {
-    if (role === "landlord") {
-      router.push("/landlord/dashboard");
-    } else {
-      router.push("/renter/dashboard");
+  const handleLogin = useCallback(async () => {
+    if (!isLoaded || !email.trim() || !password) {
+      setLoginError("Please enter your email and password.");
+      return;
     }
-  };
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const result = await signIn!.create({
+        identifier: email.trim().toLowerCase(),
+        password,
+      });
+      if (result.status === "complete") {
+        await setActive!({ session: result.createdSessionId });
+        // Verify the user record exists in MongoDB (non-blocking — failure is logged, not surfaced).
+        try {
+          const token = await getToken();
+          if (token) {
+            const r = await fetch(`${API_URL}/api/auth/me`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!r.ok) console.warn("[login] /api/auth/me returned", r.status);
+          }
+        } catch (e) {
+          console.warn("[login] /api/auth/me check failed:", e);
+        }
+        router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+      } else {
+        setLoginError("Sign-in incomplete. Please try again.");
+      }
+    } catch (err: any) {
+      const msg: string =
+        err?.errors?.[0]?.longMessage ??
+        err?.errors?.[0]?.message ??
+        err?.message ??
+        "Invalid email or password.";
+      setLoginError(msg);
+    } finally {
+      setLoginLoading(false);
+    }
+  }, [isLoaded, email, password, role, signIn, setActive, router]);
   const handleBack = () => router.back();
 
   // -- Google Sign-In via Clerk SSO
@@ -282,7 +326,7 @@ export default function LoginScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => { setEmail(v); setLoginError(""); }}
                 onFocus={() => setFocused("email")}
                 onBlur={() => setFocused(null)}
                 selectionColor={cfg.btnColor}
@@ -308,7 +352,7 @@ export default function LoginScreen() {
                 placeholderTextColor={WHITE_40}
                 secureTextEntry={!passwordVisible}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(v) => { setPassword(v); setLoginError(""); }}
                 onFocus={() => setFocused("password")}
                 onBlur={() => setFocused(null)}
                 selectionColor={cfg.btnColor}
@@ -325,16 +369,24 @@ export default function LoginScreen() {
             </View>
           </View>
 
+          {/* Error message */}
+          {!!loginError && (
+            <Text style={styles.loginError}>⚠ {loginError}</Text>
+          )}
+
           {/* Sign-in button */}
           <Animated.View style={[{ marginTop: 6 }, buttonAnimStyle]}>
             <TouchableOpacity
-              style={[styles.signInBtn, { backgroundColor: cfg.btnColor }]}
+              style={[styles.signInBtn, { backgroundColor: cfg.btnColor }, loginLoading && { opacity: 0.6 }]}
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
               onPress={handleLogin}
               activeOpacity={1}
+              disabled={loginLoading}
             >
-              <Text style={styles.signInText}>{cfg.btnLabel}</Text>
+              {loginLoading
+                ? <ActivityIndicator color={WHITE} />
+                : <Text style={styles.signInText}>{cfg.btnLabel}</Text>}
             </TouchableOpacity>
           </Animated.View>
 
@@ -585,6 +637,14 @@ const styles = StyleSheet.create({
   inputPassword: { paddingRight: 4 },
   eyeBtn: { paddingLeft: 6, paddingVertical: 4 },
   eyeText: { fontSize: 12, fontWeight: "600" },
+
+  loginError: {
+    fontSize: 12,
+    color: "#F87171",
+    marginTop: 6,
+    marginBottom: 2,
+    fontWeight: "500",
+  },
 
   // CTA
   signInBtn: {

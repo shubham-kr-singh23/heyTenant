@@ -1,33 +1,24 @@
-﻿import { Redirect } from "expo-router";
-import { View, StyleSheet } from "react-native";
-import { useAuth } from "@clerk/expo";
+import { Redirect } from "expo-router";
+import { useAuth, useUser } from "@clerk/expo";
 
-// Redirect signed-in users straight to their dashboard, everyone else to welcome.
-// Using <Redirect> replaces this route synchronously before any paint.
+// Central redirect gate. We MUST wait for Clerk to finish loading before
+// issuing any redirect. Firing a <Redirect> while isLoaded=false means React
+// can push a new route while the previous screen is still mid-render (hooks
+// still running), which causes "Rendered fewer hooks than expected".
 export default function Index() {
   const { isSignedIn, isLoaded } = useAuth();
+  const { user } = useUser();
 
-  // While Clerk is initialising, render the background colour only
-  // - the custom splash screen is already covering it.
-  if (!isLoaded) {
-    return <View style={styles.bg} />;
-  }
+  // Clerk not ready yet — render nothing, let it load silently.
+  if (!isLoaded) return null;
 
+  // Signed in → route to the correct dashboard based on the user's role
   if (isSignedIn) {
+    const role = user?.unsafeMetadata?.role as string | undefined;
+    if (role === "LANDLORD") return <Redirect href="/landlord/dashboard" />;
     return <Redirect href="/renter/dashboard" />;
   }
 
-  return (
-    <>
-      <View style={styles.bg} />
-      <Redirect href="/welcome" />
-    </>
-  );
+  // Not signed in → welcome screen
+  return <Redirect href="/welcome" />;
 }
-
-const styles = StyleSheet.create({
-  bg: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#1A3C5E",
-  },
-});
