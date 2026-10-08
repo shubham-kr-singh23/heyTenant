@@ -32,45 +32,40 @@ const REPORT_TABS = ["Overview", "Revenue", "Tenants", "Maintenance"] as const;
 type ReportTab = typeof REPORT_TABS[number];
 
 // ── Mock data ──────────────────────────────────────────────────────────────────
-const MONTHLY_REVENUE = [28400, 31200, 29800, 33500, 35100, 34200, 36800, 35500, 37200, 38100, 36400, 39200];
+const MONTHLY_REVENUE = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 const MONTHS          = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 const OVERVIEW_KPIS = [
-  { label: "Total Revenue",    value: "£415,400", change: "+12.4%", positive: true,  icon: "💷", color: SUCCESS      },
-  { label: "Avg Occupancy",    value: "91%",       change: "+3.2%",  positive: true,  icon: "🏢", color: ACCENT_LIGHT },
-  { label: "Outstanding Rent", value: "£4,800",    change: "-2 units",positive: false,icon: "⚠️", color: WARNING      },
-  { label: "Maintenance Cost", value: "£6,200",    change: "+£800",  positive: false, icon: "🔧", color: DANGER       },
+  { label: "Total Revenue",    value: "--", change: "--", positive: true,  icon: "💷", color: SUCCESS      },
+  { label: "Avg Occupancy",    value: "--", change: "--", positive: true,  icon: "🏢", color: ACCENT_LIGHT },
+  { label: "Outstanding Rent", value: "--", change: "--", positive: false, icon: "⚠️", color: WARNING      },
+  { label: "Maintenance Cost", value: "--", change: "--", positive: false, icon: "🔧", color: DANGER       },
 ];
 
-const TOP_PROPERTIES = [
-  { id: "1", name: "Oak Street Portfolio",  units: 5, revenue: "£6,250",  occupancy: 100, trend: +8 },
-  { id: "2", name: "Maple Avenue Block",    units: 4, revenue: "£4,800",  occupancy: 75,  trend: -2 },
-  { id: "3", name: "Cedar Lane Complex",    units: 6, revenue: "£7,800",  occupancy: 83,  trend: +4 },
-  { id: "4", name: "Birch Street House",    units: 3, revenue: "£3,300",  occupancy: 100, trend: +1 },
-];
+const TOP_PROPERTIES: { id: string; name: string; units: number; revenue: string; occupancy: number; trend: number }[] = [];
 
 const TENANT_STATS = [
-  { label: "Total Tenants",    value: "38", color: ACCENT_LIGHT },
-  { label: "Avg Tenure",       value: "14 mo", color: PURPLE },
-  { label: "New This Month",   value: "2",  color: SUCCESS },
-  { label: "Leaving Soon",     value: "3",  color: WARNING },
+  { label: "Total Tenants",  value: "--", color: ACCENT_LIGHT },
+  { label: "Avg Tenure",     value: "--", color: PURPLE },
+  { label: "New This Month", value: "--", color: SUCCESS },
+  { label: "Leaving Soon",   value: "--", color: WARNING },
 ];
 
 const PAYMENT_BREAKDOWN = [
-  { label: "Collected",  value: 28, color: SUCCESS },
-  { label: "Pending",    value: 6,  color: WARNING },
-  { label: "Overdue",    value: 4,  color: DANGER  },
+  { label: "Collected",  value: 0, color: SUCCESS },
+  { label: "Pending",    value: 0, color: WARNING },
+  { label: "Overdue",    value: 0, color: DANGER  },
 ];
 
 const MAINT_BREAKDOWN = [
-  { label: "Resolved",    value: 12, color: SUCCESS      },
-  { label: "In Progress", value: 5,  color: WARNING      },
-  { label: "Open",        value: 3,  color: DANGER       },
-  { label: "Scheduled",   value: 4,  color: ACCENT_LIGHT },
+  { label: "Resolved",    value: 0, color: SUCCESS      },
+  { label: "In Progress", value: 0, color: WARNING      },
+  { label: "Open",        value: 0, color: DANGER       },
+  { label: "Scheduled",   value: 0, color: ACCENT_LIGHT },
 ];
 
 const MAINT_COST_MONTHS = ["Sep", "Oct", "Nov", "Dec"];
-const MAINT_COSTS       = [1200, 1800, 900, 2300];
+const MAINT_COSTS       = [0, 0, 0, 0];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(18);
@@ -219,18 +214,19 @@ export default function ViewReports() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Annual Revenue" action="YTD" />
-                <Text style={s.bigVal}>£415,400</Text>
-                <Text style={s.cardSub}>+12.4% vs last year</Text>
-                <View style={{ marginTop: 12 }}>
-                  <RevenueBarChart data={MONTHLY_REVENUE} months={MONTHS} />
-                </View>
+                <Text style={s.bigVal}>--</Text>
+                <Text style={s.cardSub}>No revenue data yet</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="Top Properties" action="See all" />
-                {TOP_PROPERTIES.map((p, i) => (
+                {TOP_PROPERTIES.length === 0 ? (
+                  <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                    <Text style={{ color: WHITE_40, fontSize: 13 }}>No properties added yet</Text>
+                  </View>
+                ) : TOP_PROPERTIES.map((p, i) => (
                   <TouchableOpacity key={p.id} style={[s.propRow, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={s.propLeft}>
                       <View style={s.propIconBox}><Text style={{ fontSize: 16 }}>🏢</Text></View>
@@ -252,12 +248,11 @@ export default function ViewReports() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Occupancy</Text>
-                  <View style={{ alignItems: "center", marginTop: 10 }}>
-                    <MiniDonut pct={91} color={ACCENT_LIGHT} label="Avg Rate" />
-                  </View>
+                  <Text style={[s.bigVal, { marginTop: 10 }]}>--%</Text>
+                  <Text style={s.cardSub}>No data yet</Text>
                 </View>
                 <View style={[s.card, s.half]}>
-                  <Text style={s.cardTitle}>Rent Dec</Text>
+                  <Text style={s.cardTitle}>Rent</Text>
                   <View style={{ gap: 8, marginTop: 10 }}>
                     {PAYMENT_BREAKDOWN.map((p) => (
                       <View key={p.label} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -280,27 +275,18 @@ export default function ViewReports() {
           <>
             <FadeIn delay={0}>
               <View style={s.card}>
-                <SectionHeader title="Revenue This Year" action="2024" />
-                <Text style={s.bigVal}>£415,400</Text>
-                <View style={[s.pill, { alignSelf: "flex-start", backgroundColor: SUCCESS_BG, marginBottom: 12 }]}>
-                  <Text style={[s.pillTxt, { color: SUCCESS }]}>+12.4% vs 2023</Text>
-                </View>
-                <RevenueBarChart data={MONTHLY_REVENUE} months={MONTHS} />
+                <SectionHeader title="Revenue This Year" />
+                <Text style={s.bigVal}>--</Text>
+                <Text style={s.cardSub}>No revenue data yet</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Monthly Breakdown" />
-                {MONTHLY_REVENUE.slice().reverse().map((v, i) => (
-                  <View key={i} style={[s.revRow, i > 0 && s.borderTop]}>
-                    <Text style={s.revMonth}>{MONTHS[11 - i]} 2024</Text>
-                    <View style={s.revBarWrap}>
-                      <View style={[s.revBar, { width: `${Math.round((v / Math.max(...MONTHLY_REVENUE)) * 100)}%` as any, backgroundColor: i === 0 ? WHITE_40 : ACCENT }]} />
-                    </View>
-                    <Text style={s.revVal}>£{v.toLocaleString()}</Text>
-                  </View>
-                ))}
+                <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No monthly data yet</Text>
+                </View>
               </View>
             </FadeIn>
 
@@ -308,13 +294,13 @@ export default function ViewReports() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Avg Monthly</Text>
-                  <Text style={[s.bigVal, { fontSize: 20 }]}>£{Math.round(MONTHLY_REVENUE.reduce((a, b) => a + b) / MONTHLY_REVENUE.length).toLocaleString()}</Text>
+                  <Text style={[s.bigVal, { fontSize: 20 }]}>--</Text>
                   <Text style={s.cardSub}>Per month</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Best Month</Text>
-                  <Text style={[s.bigVal, { fontSize: 20, color: SUCCESS }]}>Dec</Text>
-                  <Text style={s.cardSub}>£39,200</Text>
+                  <Text style={[s.bigVal, { fontSize: 20, color: SUCCESS }]}>--</Text>
+                  <Text style={s.cardSub}>No data yet</Text>
                 </View>
               </View>
             </FadeIn>
@@ -337,7 +323,7 @@ export default function ViewReports() {
 
             <FadeIn delay={80}>
               <View style={s.card}>
-                <SectionHeader title="Payment Status — Dec" />
+                <SectionHeader title="Payment Status" />
                 <View style={s.rentRow}>
                   {PAYMENT_BREAKDOWN.map((p) => (
                     <View key={p.label} style={s.rentStat}>
@@ -347,9 +333,9 @@ export default function ViewReports() {
                   ))}
                 </View>
                 <View style={s.progTrack}>
-                  <View style={[s.progFill, { width: "73%", backgroundColor: SUCCESS }]} />
+                  <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
                 </View>
-                <Text style={s.progLbl}>73% tenants paid this month</Text>
+                <Text style={s.progLbl}>No payment data yet</Text>
               </View>
             </FadeIn>
 
@@ -358,9 +344,9 @@ export default function ViewReports() {
                 <SectionHeader title="Lease Expiry Forecast" action="6 months" />
                 {[
                   { period: "This Month",     count: 0, color: SUCCESS },
-                  { period: "Next Month",     count: 1, color: WARNING },
-                  { period: "In 2–3 Months",  count: 2, color: WARNING },
-                  { period: "In 4–6 Months",  count: 5, color: ACCENT_LIGHT },
+                  { period: "Next Month",     count: 0, color: WARNING },
+                  { period: "In 2–3 Months",  count: 0, color: WARNING },
+                  { period: "In 4–6 Months",  count: 0, color: ACCENT_LIGHT },
                 ].map((e, i) => (
                   <View key={e.period} style={[s.expiryRow, i > 0 && s.borderTop]}>
                     <View style={[s.expiryDot, { backgroundColor: e.color }]} />
@@ -391,34 +377,18 @@ export default function ViewReports() {
 
             <FadeIn delay={80}>
               <View style={s.card}>
-                <SectionHeader title="Maintenance Cost" action="4 months" />
-                <Text style={s.bigVal}>£6,200</Text>
-                <Text style={s.cardSub}>Total YTD maintenance spend</Text>
-                <View style={{ marginTop: 12 }}>
-                  <RevenueBarChart data={MAINT_COSTS} months={MAINT_COST_MONTHS} />
-                </View>
+                <SectionHeader title="Maintenance Cost" />
+                <Text style={s.bigVal}>--</Text>
+                <Text style={s.cardSub}>No maintenance cost data yet</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="By Category" />
-                {[
-                  { cat: "Plumbing",    cost: "£1,800", pct: 29, color: ACCENT_LIGHT },
-                  { cat: "Electrical",  cost: "£1,200", pct: 19, color: PURPLE       },
-                  { cat: "Appliances",  cost: "£900",   pct: 15, color: WARNING      },
-                  { cat: "Structural",  cost: "£1,400", pct: 23, color: DANGER       },
-                  { cat: "Decoration",  cost: "£900",   pct: 14, color: SUCCESS      },
-                ].map((c, i) => (
-                  <View key={c.cat} style={[s.catRow, i > 0 && s.borderTop]}>
-                    <View style={[s.catDot, { backgroundColor: c.color }]} />
-                    <Text style={s.catName}>{c.cat}</Text>
-                    <View style={s.catBarWrap}>
-                      <View style={[s.catBar, { width: `${c.pct}%` as any, backgroundColor: c.color }]} />
-                    </View>
-                    <Text style={s.catCost}>{c.cost}</Text>
-                  </View>
-                ))}
+                <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No category data yet</Text>
+                </View>
               </View>
             </FadeIn>
           </>

@@ -20,7 +20,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { useClerk } from "@clerk/expo";
+import { useClerk, useUser } from "@clerk/expo";
 
 // â”€â”€â”€ Palette (matches dashboard) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const BRAND_BLUE   = "#1A3C5E";
@@ -44,32 +44,11 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-// â”€â”€â”€ Mock profile data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const PROFILE = {
-  name:         "John Davies",
-  initials:     "JD",
-  role:         "Landlord",
-  email:        "john.davies@email.com",
-  phone:        "+44 7911 123456",
-  location:     "Manchester, United Kingdom",
-  memberSince:  "March 2019",
-  licenceNo:    "LIC-2024-GB-48821",
-  taxRef:       "UTR 1234 5678 90",
-  bio:          "Experienced residential landlord managing a portfolio of 12 properties across Greater Manchester. Committed to maintaining high-quality homes and building long-term tenant relationships.",
-};
-
 const PORTFOLIO_STATS = [
-  { label: "Properties", value: "12",   color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)"  },
-  { label: "Tenants",    value: "38",   color: SUCCESS,       bg: SUCCESS_BG               },
-  { label: "Vacancies",  value: "3",    color: DANGER,        bg: DANGER_BG                },
-  { label: "Avg. Yield", value: "6.8%", color: PURPLE,        bg: PURPLE_BG                },
-];
-
-const PROPERTIES = [
-  { id: "1", name: "Oak Street",   units: "8 units", status: "97% occupied",  statusColor: SUCCESS,  location: "Manchester, M1"  },
-  { id: "2", name: "Maple Avenue", units: "6 units", status: "83% occupied",  statusColor: WARNING,  location: "Salford, M7"     },
-  { id: "3", name: "Birch Studios", units: "5 units", status: "60% occupied", statusColor: DANGER,   location: "Manchester, M4"  },
-  { id: "4", name: "Cedar Lane",   units: "4 units", status: "100% occupied", statusColor: SUCCESS,  location: "Stretford, M32"  },
+  { label: "Properties", value: "--", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)"  },
+  { label: "Tenants",    value: "--", color: SUCCESS,       bg: SUCCESS_BG               },
+  { label: "Vacancies",  value: "--", color: DANGER,        bg: DANGER_BG                },
+  { label: "Avg. Yield", value: "--", color: PURPLE,        bg: PURPLE_BG                },
 ];
 
 const DOCUMENTS = [
@@ -147,10 +126,30 @@ const cr = StyleSheet.create({
 });
 
 // â”€â”€â”€ Main screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0]?.slice(0, 2).toUpperCase() ?? "?";
+}
+
 export default function LandlordProfile() {
-  const router = useRouter();
+  const router      = useRouter();
   const { signOut } = useClerk();
+  const { user }    = useUser();
   const [signingOut, setSigningOut] = useState(false);
+
+  const displayName = user?.fullName ?? user?.username ?? "--";
+  const initials    = user?.fullName ? getInitials(user.fullName)
+                    : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
+  const email       = user?.primaryEmailAddress?.emailAddress ?? "--";
+  const phone       = (user?.unsafeMetadata?.phone as string | undefined) ?? "--";
+  const location    = (user?.unsafeMetadata?.location as string | undefined) ?? "--";
+  const memberSince = user?.createdAt
+    ? new Date(user.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+    : "--";
+  const bio         = (user?.unsafeMetadata?.bio as string | undefined) ?? "--";
+  const licenceNo   = (user?.unsafeMetadata?.licenceNo as string | undefined) ?? "--";
+  const taxRef      = (user?.unsafeMetadata?.taxRef as string | undefined) ?? "--";
 
   const handleSignOut = () => {
     Alert.alert(
@@ -240,35 +239,35 @@ export default function LandlordProfile() {
           <View style={s.heroCard}>
             <View style={s.avatarOuter}>
               <View style={s.avatar}>
-                <Text style={s.avatarTxt}>{PROFILE.initials}</Text>
+                <Text style={s.avatarTxt}>{initials}</Text>
               </View>
               <View style={s.onlineDot} />
             </View>
 
             <View style={s.heroName}>
-              <Text style={s.nameText}>{PROFILE.name}</Text>
+              <Text style={s.nameText}>{displayName}</Text>
               <VerifiedBadge />
             </View>
-            <Text style={s.roleText}>{PROFILE.role} {"\u00B7"} Since {PROFILE.memberSince}</Text>
+            <Text style={s.roleText}>Landlord {"\u00B7"} Since {memberSince}</Text>
 
             <View style={s.heroStrip}>
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>4.9</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Rating</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>12</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Properties</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>38</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Tenants</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>5 yrs</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Experience</Text>
               </View>
             </View>
@@ -276,14 +275,14 @@ export default function LandlordProfile() {
             <View style={s.heroActions}>
               <TouchableOpacity
                 style={[s.heroActionBtn, s.heroPrimary]}
-                onPress={() => Linking.openURL(`mailto:${PROFILE.email}`)}
+                onPress={() => email !== "--" && Linking.openURL(`mailto:${email}`)}
                 activeOpacity={0.8}
               >
                 <Text style={s.heroPrimaryTxt}>{"\u2709"}{"  "}Message</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.heroActionBtn, s.heroSecondary]}
-                onPress={() => Linking.openURL(`tel:${PROFILE.phone}`)}
+                onPress={() => phone !== "--" && Linking.openURL(`tel:${phone}`)}
                 activeOpacity={0.8}
               >
                 <Text style={s.heroSecondaryTxt}>{"\uD83D\uDCDE"}{"  "}Call</Text>
@@ -298,7 +297,7 @@ export default function LandlordProfile() {
             <FadeIn delay={60}>
               <View style={s.card}>
                 <SectionHeader title="About" />
-                <Text style={s.bioText}>{PROFILE.bio}</Text>
+                <Text style={s.bioText}>{bio}</Text>
               </View>
             </FadeIn>
 
@@ -307,18 +306,18 @@ export default function LandlordProfile() {
                 <SectionHeader title="Contact Details" />
                 <ContactRow
                   icon={"\u2709\uFE0F"}
-                  value={PROFILE.email}
-                  onPress={() => Linking.openURL(`mailto:${PROFILE.email}`)}
+                  value={email}
+                  onPress={email !== "--" ? () => Linking.openURL(`mailto:${email}`) : undefined}
                 />
                 <ContactRow
                   icon={"\uD83D\uDCDE"}
-                  value={PROFILE.phone}
-                  onPress={() => Linking.openURL(`tel:${PROFILE.phone}`)}
+                  value={phone}
+                  onPress={phone !== "--" ? () => Linking.openURL(`tel:${phone}`) : undefined}
                 />
-                <ContactRow icon={"\uD83D\uDCCD"} value={PROFILE.location} />
+                <ContactRow icon={"\uD83D\uDCCD"} value={location} />
                 <View style={[cr.row, { borderBottomWidth: 0 }]}>
                   <View style={cr.iconWrap}><Text style={cr.icon}>{"\uD83D\uDCC5"}</Text></View>
-                  <Text style={cr.value}>Member since {PROFILE.memberSince}</Text>
+                  <Text style={cr.value}>Member since {memberSince}</Text>
                 </View>
               </View>
             </FadeIn>
@@ -330,13 +329,13 @@ export default function LandlordProfile() {
                   <View style={s.complianceItem}>
                     <Text style={s.complianceIcon}>{"\uD83C\uDFDB"}</Text>
                     <Text style={s.complianceLbl}>Licence No.</Text>
-                    <Text style={s.complianceVal}>{PROFILE.licenceNo}</Text>
+                    <Text style={s.complianceVal}>{licenceNo}</Text>
                   </View>
                   <View style={s.compDivider} />
                   <View style={s.complianceItem}>
                     <Text style={s.complianceIcon}>{"\uD83D\uDCBC"}</Text>
                     <Text style={s.complianceLbl}>Tax Ref (UTR)</Text>
-                    <Text style={s.complianceVal}>{PROFILE.taxRef}</Text>
+                    <Text style={s.complianceVal}>{taxRef}</Text>
                   </View>
                 </View>
                 <View style={s.complianceBadgeRow}>
@@ -395,66 +394,51 @@ export default function LandlordProfile() {
               <View style={s.revenueCard}>
                 <View style={s.revLeft}>
                   <Text style={s.revLabel}>Monthly Revenue</Text>
-                  <Text style={s.revAmount}>{"\u00A3"}34,200</Text>
+                  <Text style={s.revAmount}>--</Text>
                   <View style={s.revBadge}>
-                    <Text style={s.revBadgeTxt}>{"\u2191"} 8.4% vs last month</Text>
+                    <Text style={s.revBadgeTxt}>No data yet</Text>
                   </View>
                 </View>
                 <View style={s.revRight}>
                   <Text style={s.revLabel}>Annual (projected)</Text>
-                  <Text style={s.revAnnual}>{"\u00A3"}408k</Text>
-                  <Text style={s.revSub}>Net yield: 6.8%</Text>
+                  <Text style={s.revAnnual}>--</Text>
+                  <Text style={s.revSub}>Net yield: --</Text>
                 </View>
               </View>
             </FadeIn>
 
             <FadeIn delay={120}>
               <View style={s.card}>
-                <SectionHeader title="Properties" sub="12 total" />
-                {PROPERTIES.map((prop, i) => (
-                  <TouchableOpacity
-                    key={prop.id}
-                    style={[s.propItem, i < PROPERTIES.length - 1 && s.propBorder]}
-                    activeOpacity={0.75}
-                  >
-                    <View style={s.propIconWrap}>
-                      <Text style={s.propIcon}>{"\uD83C\uDFE2"}</Text>
-                    </View>
-                    <View style={s.propBody}>
-                      <Text style={s.propName}>{prop.name}</Text>
-                      <Text style={s.propLocation}>{prop.location} {"\u00B7"} {prop.units}</Text>
-                    </View>
-                    <View style={[s.propBadge, { backgroundColor: `${prop.statusColor}18` }]}>
-                      <Text style={[s.propBadgeTxt, { color: prop.statusColor }]}>{prop.status}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                <SectionHeader title="Properties" sub="--" />
+                <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No properties added yet</Text>
+                </View>
               </View>
             </FadeIn>
 
             <FadeIn delay={180}>
               <View style={s.card}>
-                <SectionHeader title="Rent Collection \u2014 Dec" />
+                <SectionHeader title="Rent Collection" />
                 <View style={s.collectRow}>
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: SUCCESS }]}>28</Text>
+                    <Text style={[s.collectVal, { color: SUCCESS }]}>--</Text>
                     <Text style={s.collectLbl}>Collected</Text>
                   </View>
                   <View style={s.collectDiv} />
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: WARNING }]}>6</Text>
+                    <Text style={[s.collectVal, { color: WARNING }]}>--</Text>
                     <Text style={s.collectLbl}>Pending</Text>
                   </View>
                   <View style={s.collectDiv} />
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: DANGER }]}>4</Text>
+                    <Text style={[s.collectVal, { color: DANGER }]}>--</Text>
                     <Text style={s.collectLbl}>Overdue</Text>
                   </View>
                 </View>
                 <View style={s.progTrack}>
-                  <View style={[s.progFill, { width: "73%", backgroundColor: SUCCESS }]} />
+                  <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
                 </View>
-                <Text style={s.progLbl}>73% collected this month</Text>
+                <Text style={s.progLbl}>No rent data available yet</Text>
               </View>
             </FadeIn>
           </>

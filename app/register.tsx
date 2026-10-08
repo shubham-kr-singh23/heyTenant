@@ -47,10 +47,10 @@ function isValidEmail(v: string) {
 }
 
 // Split a full name into firstName / lastName for Clerk
-function splitName(full: string): { firstName: string; lastName: string } {
-  const parts = full.trim().split(/\s+/);
+function splitName(full: string): { firstName: string; lastName?: string } {
+  const parts     = full.trim().split(/\s+/);
   const firstName = parts[0] ?? "";
-  const lastName  = parts.slice(1).join(" ") || " "; // Clerk requires non-empty lastName
+  const lastName  = parts.length > 1 ? parts.slice(1).join(" ") : undefined;
   return { firstName, lastName };
 }
 
@@ -87,8 +87,19 @@ function OtpInput({
   const inputRef = useRef<TextInput>(null);
   const digits = value.padEnd(6, "").split("").slice(0, 6);
 
+  // Focus the hidden input on mount (delayed so the slide-in animation finishes first)
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 350);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
-    <View style={otp.wrapper}>
+    // Outer touchable so tapping anywhere on the OTP area re-opens the keyboard
+    <TouchableOpacity
+      style={otp.wrapper}
+      onPress={() => inputRef.current?.focus()}
+      activeOpacity={1}
+    >
       <TextInput
         ref={inputRef}
         style={otp.hidden}
@@ -97,9 +108,9 @@ function OtpInput({
         keyboardType="number-pad"
         maxLength={6}
         caretHidden
-        autoFocus
+        showSoftInputOnFocus
       />
-      <TouchableOpacity style={otp.row} onPress={() => inputRef.current?.focus()} activeOpacity={1}>
+      <View style={otp.row}>
         {digits.map((d, i) => (
           <View
             key={i}
@@ -112,18 +123,18 @@ function OtpInput({
             <Text style={otp.digit}>{d}</Text>
           </View>
         ))}
-      </TouchableOpacity>
-    </View>
+      </View>
+    </TouchableOpacity>
   );
 }
 const otp = StyleSheet.create({
   wrapper:   { alignItems: "center", marginBottom: 8 },
-  hidden:    { position: "absolute", opacity: 0, width: 0, height: 0 },
+  hidden:    { position: "absolute", opacity: 0, width: 1, height: 1 },
   row:       { flexDirection: "row", gap: 10 },
-  box:       { width: 44, height: 54, borderRadius: 12, borderWidth: 1.5, borderColor: WHITE_15,
+  box:       { width: 48, height: 58, borderRadius: 12, borderWidth: 2, borderColor: WHITE_15,
                backgroundColor: WHITE_08, alignItems: "center", justifyContent: "center" },
-  boxActive: { borderColor: ACCENT },
-  digit:     { fontSize: 22, fontWeight: "800", color: WHITE, letterSpacing: 1 },
+  boxActive: { borderColor: ACCENT, borderWidth: 2 },
+  digit:     { fontSize: 24, fontWeight: "800", color: WHITE, letterSpacing: 1 },
 });
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
@@ -259,7 +270,7 @@ export default function RegisterScreen() {
       const { firstName, lastName } = splitName(fullName);
       await signUp!.create({
         firstName,
-        lastName,
+        ...(lastName ? { lastName } : {}),
         username: username.trim().toLowerCase(),
         emailAddress: email.trim().toLowerCase(),
         password,

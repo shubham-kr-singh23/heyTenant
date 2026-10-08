@@ -33,19 +33,7 @@ const CATEGORIES = [
 ] as const;
 type CatId = typeof CATEGORIES[number]["id"];
 
-const DOCUMENTS = [
-  { id: "1",  name: "Tenancy Agreement",          date: "15 Jan 2024", size: "1.2 MB", cat: "legal",     icon: "📄", color: ACCENT_LIGHT, status: "Current" },
-  { id: "2",  name: "Nov 2024 Rent Receipt",       date: "1 Nov 2024",  size: "120 KB", cat: "receipts",  icon: "🧾", color: SUCCESS,      status: null       },
-  { id: "3",  name: "Oct 2024 Rent Receipt",       date: "1 Oct 2024",  size: "118 KB", cat: "receipts",  icon: "🧾", color: SUCCESS,      status: null       },
-  { id: "4",  name: "Sep 2024 Rent Receipt",       date: "3 Sep 2024",  size: "118 KB", cat: "receipts",  icon: "🧾", color: WARNING,      status: "Late"     },
-  { id: "5",  name: "Aug 2024 Rent Receipt",       date: "1 Aug 2024",  size: "120 KB", cat: "receipts",  icon: "🧾", color: SUCCESS,      status: null       },
-  { id: "6",  name: "Gas Safety Certificate",      date: "20 Mar 2024", size: "540 KB", cat: "safety",    icon: "🔒", color: TEAL,         status: "Valid"    },
-  { id: "7",  name: "Electrical Safety Report",    date: "15 Jan 2024", size: "860 KB", cat: "safety",    icon: "⚡",  color: WARNING,      status: "Valid"    },
-  { id: "8",  name: "EPC Certificate",             date: "15 Jan 2024", size: "320 KB", cat: "safety",    icon: "🌿", color: SUCCESS,      status: "B Rated"  },
-  { id: "9",  name: "Move-in Inventory Report",    date: "15 Jan 2024", size: "2.4 MB", cat: "inventory", icon: "🏠", color: PURPLE,       status: null       },
-  { id: "10", name: "Deposit Scheme Certificate",  date: "16 Jan 2024", size: "440 KB", cat: "legal",     icon: "🔐", color: ACCENT_LIGHT, status: "Protected"},
-  { id: "11", name: "Tenancy Renewal Offer",       date: "1 Dec 2024",  size: "980 KB", cat: "legal",     icon: "📋", color: WARNING,      status: "Action needed"},
-];
+const DOCUMENTS: { id: string; name: string; date: string; size: string; cat: string; icon: string; color: string; status: string | null }[] = [];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(16);
@@ -88,7 +76,7 @@ export default function Documents() {
       <StatusBar barStyle="light-content" backgroundColor={BRAND_DEEP} translucent={false} />
       <Animated.View style={[s.header, { paddingTop: pt }, hStyle]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} activeOpacity={0.7}><Text style={s.backArrow}>‹</Text></TouchableOpacity>
-        <View style={s.hCenter}><Text style={s.hTitle}>Documents</Text><Text style={s.hSub}>{DOCUMENTS.length} files</Text></View>
+        <View style={s.hCenter}><Text style={s.hTitle}>Documents</Text><Text style={s.hSub}>{filtered.length} files</Text></View>
         <View style={{ width: 38 }} />
       </Animated.View>
 
@@ -126,11 +114,11 @@ export default function Documents() {
             <View style={s.storageCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
                 <Text style={s.storageTitle}>Storage Used</Text>
-                <Text style={s.storageSub}>7.2 MB / 50 MB</Text>
+                <Text style={s.storageSub}>-- / 50 MB</Text>
               </View>
-              <View style={s.storageTrack}><View style={[s.storageFill, { width: "14%" }]} /></View>
+              <View style={s.storageTrack}><View style={[s.storageFill, { width: "0%" }]} /></View>
               <View style={{ flexDirection: "row", gap: 16, marginTop: 10 }}>
-                {[["📄", "Legal", "3"], ["🧾", "Receipts", "4"], ["🔒", "Safety", "3"], ["🏠", "Inventory", "1"]].map(([ic, l, n]) => (
+                {[["📄", "Legal", "0"], ["🧾", "Receipts", "0"], ["🔒", "Safety", "0"], ["🏠", "Inventory", "0"]].map(([ic, l, n]) => (
                   <View key={l} style={{ alignItems: "center", gap: 3 }}>
                     <Text style={{ fontSize: 16 }}>{ic}</Text>
                     <Text style={{ fontSize: 10, color: WHITE_40 }}>{n} files</Text>
@@ -146,7 +134,9 @@ export default function Documents() {
         <FadeIn delay={activeCat === "all" ? 120 : 0}>
           <View style={s.card}>
             <Text style={s.cardTitle}>{activeCat === "all" ? "All Documents" : CATEGORIES.find(c => c.id === activeCat)?.label} ({filtered.length})</Text>
-            {filtered.map((doc, i) => (
+            {filtered.length === 0 ? (
+              <Text style={{ color: WHITE_40, fontSize: 13, textAlign: "center", paddingVertical: 20 }}>No documents yet</Text>
+            ) : filtered.map((doc, i) => (
               <TouchableOpacity key={doc.id} style={[s.docRow, i > 0 && s.bt]} activeOpacity={0.75}>
                 <View style={[s.docIconBox, { backgroundColor: `${doc.color}18` }]}>
                   <Text style={{ fontSize: 22 }}>{doc.icon}</Text>

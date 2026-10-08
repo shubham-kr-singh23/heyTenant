@@ -18,6 +18,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useUser } from "@clerk/expo";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BRAND_BLUE   = "#1A3C5E";
@@ -43,53 +44,20 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-// ─── Static mock data ─────────────────────────────────────────────────────────
+// ─── Static data ──────────────────────────────────────────────────────────────
 const KPI_CARDS = [
-  { label: "Rent Due",     value: "£1,250", icon: "🏷️", color: WARNING,      bg: WARNING_BG  },
-  { label: "Days Left",    value: "8",      icon: "📅", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
-  { label: "Open Tickets", value: "2",      icon: "🔧", color: DANGER,       bg: DANGER_BG   },
-  { label: "Messages",     value: "3",      icon: "💬", color: TEAL,         bg: TEAL_BG     },
+  { label: "Rent Due",     value: "--", icon: "🏷️", color: WARNING,      bg: WARNING_BG  },
+  { label: "Days Left",    value: "--", icon: "📅", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Open Tickets", value: "--", icon: "🔧", color: DANGER,       bg: DANGER_BG   },
+  { label: "Messages",     value: "--", icon: "💬", color: TEAL,         bg: TEAL_BG     },
 ];
 
-const PAYMENT_HISTORY = [
-  { id: "1", month: "November 2024",  amount: "£1,250", date: "1 Nov", status: "Paid" },
-  { id: "2", month: "October 2024",   amount: "£1,250", date: "1 Oct", status: "Paid" },
-  { id: "3", month: "September 2024", amount: "£1,250", date: "3 Sep", status: "Late" },
-  { id: "4", month: "August 2024",    amount: "£1,250", date: "1 Aug", status: "Paid" },
-  { id: "5", month: "July 2024",      amount: "£1,250", date: "1 Jul", status: "Paid" },
-];
-
-const MAINTENANCE_REQUESTS = [
-  { id: "1", issue: "Leaking tap — kitchen",    raised: "Dec 14", priority: "High",   status: "In Progress" },
-  { id: "2", issue: "Bathroom extractor noisy", raised: "Dec 10", priority: "Medium", status: "Open"        },
-  { id: "3", issue: "Door hinge squeaking",     raised: "Nov 28", priority: "Low",    status: "Resolved"    },
-];
-
-const MESSAGES = [
-  { id: "1", from: "Property Manager",  preview: "Hi Alex, just to confirm your boiler service is scheduled for Dec 22.", time: "10 min ago", read: false },
-  { id: "2", from: "John Davies (LL)",  preview: "Your December rent statement is ready to view in Documents.",           time: "2 hrs ago",  read: false },
-  { id: "3", from: "Maintenance Team",  preview: "We have assigned a plumber to your kitchen tap — ETA tomorrow 9am.",   time: "Yesterday",  read: true  },
-];
-
-const DOCUMENTS = [
-  { id: "1", name: "Tenancy Agreement",      date: "Jan 2024",   icon: "📄", color: ACCENT_LIGHT },
-  { id: "2", name: "Nov 2024 Rent Receipt",  date: "1 Nov 2024", icon: "🧾", color: SUCCESS      },
-  { id: "3", name: "Oct 2024 Rent Receipt",  date: "1 Oct 2024", icon: "🧾", color: SUCCESS      },
-  { id: "4", name: "Gas Safety Certificate", date: "Mar 2024",   icon: "🔒", color: TEAL         },
-  { id: "5", name: "Move-in Inspection",     date: "Jan 2024",   icon: "🏠", color: PURPLE       },
-];
-
-const UPCOMING_EVENTS = [
-  { id: "1", title: "Rent Due",               date: "1 Jan",  color: WARNING      },
-  { id: "2", title: "Boiler Service",         date: "22 Dec", color: ACCENT_LIGHT },
-  { id: "3", title: "Lease Renewal Deadline", date: "15 Jan", color: DANGER       },
-  { id: "4", title: "Annual Inspection",      date: "20 Jan", color: PURPLE       },
-];
-
-const NOTICE_BOARD = [
-  { id: "1", title: "Planned water outage",  body: "Water will be off on Dec 21 from 8am–12pm for pipe maintenance.", type: "warning" },
-  { id: "2", title: "Holiday office hours",  body: "Management office closed Dec 25–Jan 1. Emergencies: 0800 123 456.", type: "info"  },
-];
+const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
+const MAINTENANCE_REQUESTS: { id: string; issue: string; raised: string; priority: string; status: string }[] = [];
+const MESSAGES: { id: string; from: string; preview: string; time: string; read: boolean }[] = [];
+const DOCUMENTS: { id: string; name: string; date: string; icon: string; color: string }[] = [];
+const UPCOMING_EVENTS: { id: string; title: string; date: string; color: string }[] = [];
+const NOTICE_BOARD: { id: string; title: string; body: string; type: string }[] = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function statusColor(s: string) {
@@ -205,10 +173,27 @@ function PaymentSparkline() {
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0]?.slice(0, 2).toUpperCase() ?? "?";
+}
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function RenterDashboard() {
   const router    = useRouter();
   const insets    = useSafeAreaInsets();
+  const { user }  = useUser();
   const [activeTab, setActiveTab] = useState<"home" | "payments" | "maintenance" | "messages">("home");
+
+  const displayName = user?.fullName ?? user?.username ?? "there";
+  const initials    = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
 
   const headerOpacity    = useSharedValue(0);
   const headerTranslateY = useSharedValue(-16);
@@ -240,10 +225,10 @@ export default function RenterDashboard() {
       {/* ── Header ── */}
       <Animated.View style={[s.header, { paddingTop }, headerStyle]}>
         <TouchableOpacity style={s.hLeft} onPress={() => router.push("/renter/profile")} activeOpacity={0.8}>
-          <View style={s.avatar}><Text style={s.avatarTxt}>AL</Text></View>
+          <View style={s.avatar}><Text style={s.avatarTxt}>{initials}</Text></View>
           <View>
-            <Text style={s.greeting}>Good morning</Text>
-            <Text style={s.userName}>Alex Lee</Text>
+            <Text style={s.greeting}>{getGreeting()}</Text>
+            <Text style={s.userName}>{displayName}</Text>
           </View>
         </TouchableOpacity>
         <View style={s.hRight}>
@@ -306,14 +291,14 @@ export default function RenterDashboard() {
               <View style={[s.card, s.rentBanner]}>
                 <View style={s.rentBannerLeft}>
                   <Text style={s.rentBannerLabel}>NEXT RENT DUE</Text>
-                  <Text style={s.rentBannerAmount}>£1,250</Text>
-                  <Text style={s.rentBannerDate}>1 January 2025</Text>
+                  <Text style={s.rentBannerAmount}>--</Text>
+                  <Text style={s.rentBannerDate}>No lease set up yet</Text>
                   <TouchableOpacity style={s.payNowBtn} activeOpacity={0.8}>
                     <Text style={s.payNowTxt}>Pay Now</Text>
                   </TouchableOpacity>
                 </View>
                 <View style={s.rentBannerRight}>
-                  <RentCountdown daysLeft={8} total={31} />
+                  <RentCountdown daysLeft={0} total={31} />
                 </View>
               </View>
             </FadeIn>
@@ -325,40 +310,30 @@ export default function RenterDashboard() {
                 <View style={s.propRow}>
                   <View style={s.propIconBox}><Text style={{ fontSize: 28 }}>🏢</Text></View>
                   <View style={s.propDetails}>
-                    <Text style={s.propName}>Apt 4B — Oak Street</Text>
-                    <Text style={s.propAddr}>12 Oak Street, London, E1 5TW</Text>
+                    <Text style={s.propName}>--</Text>
+                    <Text style={s.propAddr}>No property assigned yet</Text>
                     <View style={s.propTagRow}>
                       <View style={[s.propTag, { backgroundColor: TEAL_BG }]}>
-                        <Text style={[s.propTagTxt, { color: TEAL }]}>Active Lease</Text>
-                      </View>
-                      <View style={[s.propTag, { backgroundColor: PURPLE_BG }]}>
-                        <Text style={[s.propTagTxt, { color: PURPLE }]}>2-Bed</Text>
+                        <Text style={[s.propTagTxt, { color: TEAL }]}>No Lease</Text>
                       </View>
                     </View>
                   </View>
                 </View>
                 <View style={s.leaseRow}>
                   <View style={s.leaseStat}>
-                    <Text style={s.leaseVal}>Jan 2024</Text>
+                    <Text style={s.leaseVal}>--</Text>
                     <Text style={s.leaseLbl}>Start Date</Text>
                   </View>
                   <View style={s.leaseDiv} />
                   <View style={s.leaseStat}>
-                    <Text style={[s.leaseVal, { color: WARNING }]}>Jan 2025</Text>
+                    <Text style={[s.leaseVal, { color: WARNING }]}>--</Text>
                     <Text style={s.leaseLbl}>End Date</Text>
                   </View>
                   <View style={s.leaseDiv} />
                   <View style={s.leaseStat}>
-                    <Text style={[s.leaseVal, { color: TEAL }]}>£1,250</Text>
+                    <Text style={[s.leaseVal, { color: TEAL }]}>--</Text>
                     <Text style={s.leaseLbl}>Monthly</Text>
                   </View>
-                </View>
-                <View style={s.renewalAlert}>
-                  <Text style={s.renewalIcon}>⚠️</Text>
-                  <Text style={s.renewalTxt}>
-                    Lease renewal deadline:{" "}
-                    <Text style={{ color: DANGER, fontWeight: "700" }}>15 Jan 2025</Text>
-                  </Text>
                 </View>
               </View>
             </FadeIn>
@@ -367,7 +342,9 @@ export default function RenterDashboard() {
             <FadeIn delay={220}>
               <View style={s.card}>
                 <SectionHeader title="Notice Board" />
-                {NOTICE_BOARD.map((n, i) => (
+                {NOTICE_BOARD.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No notices yet</Text></View>
+                ) : NOTICE_BOARD.map((n, i) => (
                   <View key={n.id} style={[s.noticeItem, i > 0 && s.borderTop]}>
                     <View style={[s.noticeIconBox, { backgroundColor: n.type === "warning" ? WARNING_BG : "rgba(74,144,217,0.12)" }]}>
                       <Text style={{ fontSize: 16 }}>{n.type === "warning" ? "⚠️" : "ℹ️"}</Text>
@@ -385,7 +362,9 @@ export default function RenterDashboard() {
             <FadeIn delay={290}>
               <View style={s.card}>
                 <SectionHeader title="Upcoming Events" action="Calendar" />
-                {UPCOMING_EVENTS.map((ev, i) => (
+                {UPCOMING_EVENTS.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No upcoming events</Text></View>
+                ) : UPCOMING_EVENTS.map((ev, i) => (
                   <TouchableOpacity key={ev.id} style={[s.evItem, i < UPCOMING_EVENTS.length - 1 && s.evBorder]} activeOpacity={0.7}>
                     <View style={[s.evDot, { backgroundColor: ev.color }]} />
                     <Text style={s.evTitle}>{ev.title}</Text>
@@ -423,7 +402,9 @@ export default function RenterDashboard() {
             <FadeIn delay={420}>
               <View style={s.card}>
                 <SectionHeader title="Documents" action="View all" />
-                {DOCUMENTS.slice(0, 3).map((doc, i) => (
+                {DOCUMENTS.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No documents yet</Text></View>
+                ) : DOCUMENTS.slice(0, 3).map((doc, i) => (
                   <TouchableOpacity key={doc.id} style={[s.docItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={[s.docIconBox, { backgroundColor: `${doc.color}18` }]}>
                       <Text style={{ fontSize: 18 }}>{doc.icon}</Text>
@@ -448,15 +429,15 @@ export default function RenterDashboard() {
                 <SectionHeader title="Payment Summary" />
                 <View style={s.twoCol}>
                   <View style={[s.summCard, { backgroundColor: SUCCESS_BG, borderColor: `${SUCCESS}30` }]}>
-                    <Text style={[s.summVal, { color: SUCCESS }]}>4/5</Text>
+                    <Text style={[s.summVal, { color: SUCCESS }]}>--</Text>
                     <Text style={s.summLbl}>On Time</Text>
                   </View>
                   <View style={[s.summCard, { backgroundColor: DANGER_BG, borderColor: `${DANGER}30` }]}>
-                    <Text style={[s.summVal, { color: DANGER }]}>1/5</Text>
+                    <Text style={[s.summVal, { color: DANGER }]}>--</Text>
                     <Text style={s.summLbl}>Late</Text>
                   </View>
                   <View style={[s.summCard, { backgroundColor: "rgba(74,144,217,0.12)", borderColor: `${ACCENT_LIGHT}30` }]}>
-                    <Text style={[s.summVal, { color: ACCENT_LIGHT }]}>£6,250</Text>
+                    <Text style={[s.summVal, { color: ACCENT_LIGHT }]}>--</Text>
                     <Text style={s.summLbl}>Paid YTD</Text>
                   </View>
                 </View>
@@ -467,22 +448,18 @@ export default function RenterDashboard() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Payment Trend</Text>
-                  <Text style={s.cardSub}>Last 5 months</Text>
-                  <PaymentSparkline />
+                  <Text style={s.cardSub}>No data yet</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Next Due</Text>
-                  <Text style={s.bigVal}>£1,250</Text>
-                  <Text style={s.cardSub}>1 Jan 2025</Text>
+                  <Text style={s.bigVal}>--</Text>
+                  <Text style={s.cardSub}>No lease set up</Text>
                   <View style={{ marginTop: 12 }}>
                     <View style={s.progTrack}>
-                      <View style={[s.progFill, { width: "73%", backgroundColor: WARNING }]} />
+                      <View style={[s.progFill, { width: "0%", backgroundColor: WARNING }]} />
                     </View>
-                    <Text style={s.progLbl}>8 days remaining</Text>
+                    <Text style={s.progLbl}>No data yet</Text>
                   </View>
-                  <TouchableOpacity style={[s.payNowBtn, { marginTop: 14, alignSelf: "stretch" }]} activeOpacity={0.8}>
-                    <Text style={s.payNowTxt}>Pay Now</Text>
-                  </TouchableOpacity>
                 </View>
               </View>
             </FadeIn>
@@ -490,7 +467,9 @@ export default function RenterDashboard() {
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="Payment History" action="Export" />
-                {PAYMENT_HISTORY.map((p, i) => (
+                {PAYMENT_HISTORY.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No payment history yet</Text></View>
+                ) : PAYMENT_HISTORY.map((p, i) => (
                   <View key={p.id} style={[s.payItem, i > 0 && s.borderTop]}>
                     <View style={[s.payIconBox, { backgroundColor: p.status === "Late" ? DANGER_BG : SUCCESS_BG }]}>
                       <Text style={{ fontSize: 16 }}>{p.status === "Late" ? "⚠️" : "✅"}</Text>
@@ -518,9 +497,9 @@ export default function RenterDashboard() {
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
                 {[
-                  { label: "Open",        val: "1", color: DANGER,  bg: DANGER_BG  },
-                  { label: "In Progress", val: "1", color: WARNING, bg: WARNING_BG },
-                  { label: "Resolved",    val: "1", color: SUCCESS, bg: SUCCESS_BG },
+                  { label: "Open",        val: "--", color: DANGER,  bg: DANGER_BG  },
+                  { label: "In Progress", val: "--", color: WARNING, bg: WARNING_BG },
+                  { label: "Resolved",    val: "--", color: SUCCESS, bg: SUCCESS_BG },
                 ].map((k) => (
                   <View key={k.label} style={[s.kpiCard, { backgroundColor: k.bg, flex: 1 }]}>
                     <Text style={[s.kpiVal, { color: k.color, fontSize: 26 }]}>{k.val}</Text>
@@ -531,7 +510,7 @@ export default function RenterDashboard() {
             </FadeIn>
 
             <FadeIn delay={80}>
-              <TouchableOpacity style={s.raiseBtn} activeOpacity={0.8}>
+              <TouchableOpacity style={s.raiseBtn} activeOpacity={0.8} onPress={() => router.push("/renter/new-request" as any)}>
                 <Text style={s.raiseBtnIcon}>+</Text>
                 <Text style={s.raiseBtnTxt}>Raise New Request</Text>
               </TouchableOpacity>
@@ -540,7 +519,9 @@ export default function RenterDashboard() {
             <FadeIn delay={150}>
               <View style={s.card}>
                 <SectionHeader title="My Requests" action="Filter" />
-                {MAINTENANCE_REQUESTS.map((req, i) => (
+                {MAINTENANCE_REQUESTS.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No maintenance requests yet</Text></View>
+                ) : MAINTENANCE_REQUESTS.map((req, i) => (
                   <TouchableOpacity key={req.id} style={[s.maintItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={s.maintLeft}>
                       <View style={[s.priorDot, { backgroundColor: priorityColor(req.priority) }]} />
@@ -594,7 +575,9 @@ export default function RenterDashboard() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Inbox" />
-                {MESSAGES.map((msg, i) => (
+                {MESSAGES.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No messages yet</Text></View>
+                ) : MESSAGES.map((msg, i) => (
                   <TouchableOpacity key={msg.id} style={[s.msgItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={[s.msgAvatar, { backgroundColor: msg.read ? WHITE_08 : `${ACCENT_LIGHT}30` }]}>
                       <Text style={[s.msgAvatarTxt, { color: msg.read ? WHITE_40 : ACCENT_LIGHT }]}>
@@ -620,7 +603,6 @@ export default function RenterDashboard() {
               <View style={s.card}>
                 <SectionHeader title="Contacts" />
                 {[
-                  { name: "John Davies",      role: "Landlord",         icon: "👤", color: ACCENT_LIGHT },
                   { name: "Property Manager", role: "Management Office", icon: "🏢", color: TEAL         },
                   { name: "Maintenance Team", role: "Repairs & Service", icon: "🔧", color: WARNING      },
                   { name: "Emergency Line",   role: "24/7 Support",     icon: "🚨", color: DANGER       },
@@ -698,6 +680,8 @@ const s = StyleSheet.create({
   progTrack: { height: 6, backgroundColor: WHITE_08, borderRadius: 3, overflow: "hidden", marginTop: 4 },
   progFill:  { height: 6, borderRadius: 3 },
   progLbl:   { fontSize: 11, color: WHITE_40, marginTop: 6 },
+  emptyState: { paddingVertical: 16, alignItems: "center" as const },
+  emptyTxt:   { fontSize: 13, color: WHITE_40 },
 
   rentBanner:       { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: `${WARNING}18`, borderColor: `${WARNING}30` },
   rentBannerLeft:   { flex: 1 },

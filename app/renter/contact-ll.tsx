@@ -28,10 +28,10 @@ const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
 const QUICK_CONTACTS = [
-  { id: "ll",    name: "John Davies",      role: "Landlord",          phone: "+44 7700 900001", email: "john.davies@example.com",   icon: "👤", color: TEAL         },
-  { id: "pm",    name: "Property Manager", role: "Management Office",  phone: "+44 20 7946 0000",email: "manager@propertymgmt.com",  icon: "🏢", color: ACCENT_LIGHT },
-  { id: "maint", name: "Maintenance Team", role: "Repairs & Service",  phone: "+44 7700 900002", email: "maintenance@propmgmt.com",  icon: "🔧", color: WARNING      },
-  { id: "em",    name: "Emergency Line",   role: "24/7 Urgent Issues", phone: "0800 123 456",    email: null,                        icon: "🚨", color: DANGER       },
+  { id: "ll",    name: "Your Landlord",    role: "Landlord",          phone: null as string | null, email: null as string | null,   icon: "👤", color: TEAL         },
+  { id: "pm",    name: "Property Manager", role: "Management Office",  phone: null as string | null, email: null as string | null,   icon: "🏢", color: ACCENT_LIGHT },
+  { id: "maint", name: "Maintenance Team", role: "Repairs & Service",  phone: null as string | null, email: null as string | null,   icon: "🔧", color: WARNING      },
+  { id: "em",    name: "Emergency Line",   role: "24/7 Urgent Issues", phone: "0800 123 456",        email: null,                    icon: "🚨", color: DANGER       },
 ];
 
 const OFFICE_HOURS = [
@@ -93,17 +93,16 @@ export default function ContactLL() {
           <FadeIn delay={0}>
             <View style={[s.card, { borderColor: `${TEAL}30` }]}>
               <View style={s.profileRow}>
-                <View style={s.profileAvatar}><Text style={s.profileAvatarTxt}>JD</Text></View>
+                <View style={s.profileAvatar}><Text style={s.profileAvatarTxt}>LL</Text></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.profileName}>John Davies</Text>
-                  <Text style={s.profileRole}>Your Landlord</Text>
+                  <Text style={s.profileName}>Your Landlord</Text>
+                  <Text style={s.profileRole}>Landlord</Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 }}>
                     <View style={s.onlineDot} /><Text style={s.onlineTxt}>Online now</Text>
                   </View>
                 </View>
                 <View style={s.profileActions}>
-                  <TouchableOpacity style={[s.profileActionBtn, { backgroundColor: TEAL_BG }]} activeOpacity={0.7}
-                    onPress={() => Linking.openURL("tel:+447700900001")}>
+                  <TouchableOpacity style={[s.profileActionBtn, { backgroundColor: TEAL_BG }]} activeOpacity={0.7}>
                     <Text style={{ fontSize: 18 }}>📞</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[s.profileActionBtn, { backgroundColor: `${ACCENT_LIGHT}15` }]} activeOpacity={0.7}>
@@ -112,9 +111,9 @@ export default function ContactLL() {
                 </View>
               </View>
               <View style={s.profileDetails}>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>📞</Text><Text style={s.profileDetailTxt}>+44 7700 900001</Text></View>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>✉️</Text><Text style={s.profileDetailTxt}>john.davies@example.com</Text></View>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>🏠</Text><Text style={s.profileDetailTxt}>12 Oak Street Portfolio, London</Text></View>
+                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>📞</Text><Text style={s.profileDetailTxt}>--</Text></View>
+                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>✉️</Text><Text style={s.profileDetailTxt}>--</Text></View>
+                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>🏠</Text><Text style={s.profileDetailTxt}>--</Text></View>
               </View>
             </View>
           </FadeIn>
@@ -133,10 +132,12 @@ export default function ContactLL() {
                     <Text style={s.contactRole}>{c.role}</Text>
                   </View>
                   <View style={{ flexDirection: "row", gap: 6 }}>
-                    <TouchableOpacity style={[s.contactBtn, { backgroundColor: `${c.color}18` }]} activeOpacity={0.7}
-                      onPress={() => Linking.openURL(`tel:${c.phone}`)}>
-                      <Text style={{ fontSize: 14 }}>📞</Text>
-                    </TouchableOpacity>
+                    {c.phone && (
+                      <TouchableOpacity style={[s.contactBtn, { backgroundColor: `${c.color}18` }]} activeOpacity={0.7}
+                        onPress={() => Linking.openURL(`tel:${c.phone}`)}>
+                        <Text style={{ fontSize: 14 }}>📞</Text>
+                      </TouchableOpacity>
+                    )}
                     {c.email && (
                       <TouchableOpacity style={[s.contactBtn, { backgroundColor: `${c.color}12` }]} activeOpacity={0.7}
                         onPress={() => Linking.openURL(`mailto:${c.email}`)}>

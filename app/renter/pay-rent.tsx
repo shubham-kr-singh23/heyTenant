@@ -33,13 +33,7 @@ const PAYMENT_METHODS = [
   { id: "open",  label: "Open Banking",   icon: "🔐", sub: "Instant · No fee · Secure"  },
 ];
 
-const PAYMENT_HISTORY = [
-  { id: "1", month: "November 2024",  amount: "£1,250", date: "1 Nov",  status: "Paid" },
-  { id: "2", month: "October 2024",   amount: "£1,250", date: "1 Oct",  status: "Paid" },
-  { id: "3", month: "September 2024", amount: "£1,250", date: "3 Sep",  status: "Late" },
-  { id: "4", month: "August 2024",    amount: "£1,250", date: "1 Aug",  status: "Paid" },
-  { id: "5", month: "July 2024",      amount: "£1,250", date: "1 Jul",  status: "Paid" },
-];
+const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
 
 function scColor(s: string) {
   return s === "Paid" ? SUCCESS : s === "Late" ? DANGER : WARNING;
@@ -60,7 +54,7 @@ export default function PayRent() {
   const pt = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
   const [method,  setMethod]  = useState("bank");
-  const [ref,     setRef]     = useState("ALEX-LEE-JAN25");
+  const [ref,     setRef]     = useState("");
   const [step,    setStep]    = useState<"select" | "confirm" | "success">("select");
   const [busy,    setBusy]    = useState(false);
   const btnSc  = useSharedValue(1);
@@ -126,7 +120,7 @@ export default function PayRent() {
         <Animated.View style={[s.succCard, succStyle]}>
           <View style={s.succIconWrap}><Text style={s.succIconTxt}>✓</Text></View>
           <Text style={s.succTitle}>Payment Sent!</Text>
-          <Text style={s.succSub}>£1,250 · January 2025</Text>
+          <Text style={s.succSub}>Payment confirmed</Text>
           <View style={s.succDetail}>
             {[["Method", cur.label], ["Reference", ref], ["Date", "Today"], ["Status", "Confirmed"]].map(([l, v], i) => (
               <View key={l} style={s.succRow}><Text style={s.succLbl}>{l}</Text><Text style={[s.succVal, l === "Status" && { color: SUCCESS }]}>{v}</Text></View>
@@ -155,18 +149,18 @@ export default function PayRent() {
               <View style={s.dueBanner}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.dueLabel}>AMOUNT DUE</Text>
-                  <Text style={s.dueAmt}>£1,250</Text>
-                  <Text style={s.dueSub}>Due 1 Jan 2025 · 8 days remaining</Text>
+                  <Text style={s.dueAmt}>--</Text>
+                  <Text style={s.dueSub}>No active lease</Text>
                 </View>
-                <View style={s.daysRing}><Text style={s.daysNum}>8</Text><Text style={s.daysLbl}>days</Text></View>
+                <View style={s.daysRing}><Text style={s.daysNum}>--</Text><Text style={s.daysLbl}>days</Text></View>
               </View>
             </FadeIn>
 
             <FadeIn delay={80}>
               <View style={s.statsRow}>
-                {[[SUCCESS, SUCCESS_BG, "4/5",    "On Time"],
-                  [ACCENT_LIGHT, "rgba(74,144,217,0.12)", "£6,250", "Paid YTD"],
-                  [DANGER, DANGER_BG, "1", "Late"]].map(([c, bg, val, lbl]) => (
+                {[[SUCCESS, SUCCESS_BG, "--",  "On Time"],
+                  [ACCENT_LIGHT, "rgba(74,144,217,0.12)", "--", "Paid YTD"],
+                  [DANGER, DANGER_BG, "--", "Late"]].map(([c, bg, val, lbl]) => (
                   <View key={lbl as string} style={[s.statCard, { borderColor: `${c}30`, backgroundColor: bg as string }]}>
                     <Text style={[s.statVal, { color: c as string }]}>{val}</Text>
                     <Text style={s.statLbl}>{lbl}</Text>
@@ -203,7 +197,9 @@ export default function PayRent() {
             <FadeIn delay={290}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Recent Payments</Text>
-                {PAYMENT_HISTORY.slice(0, 3).map((p, i) => (
+                {PAYMENT_HISTORY.length === 0 ? (
+                  <Text style={{ color: WHITE_40, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>No payment history yet</Text>
+                ) : PAYMENT_HISTORY.slice(0, 3).map((p, i) => (
                   <View key={p.id} style={[s.histRow, i > 0 && s.bt]}>
                     <View style={[s.histIcon, { backgroundColor: p.status === "Late" ? DANGER_BG : SUCCESS_BG }]}><Text style={{ fontSize: 14 }}>{p.status === "Late" ? "⚠️" : "✅"}</Text></View>
                     <View style={{ flex: 1 }}><Text style={s.histMonth}>{p.month}</Text><Text style={s.histDate}>Paid: {p.date}</Text></View>
@@ -221,7 +217,7 @@ export default function PayRent() {
             <FadeIn delay={0}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Payment Summary</Text>
-                {[["Payee","John Davies (Landlord)"],["Property","Apt 4B — Oak Street"],["Period","January 2025"],["Amount","£1,250"],["Method",cur.label],["Reference",ref]].map(([l, v], i) => (
+                {[["Payee","Your Landlord"],["Property","--"],["Period","--"],["Amount","--"],["Method",cur.label],["Reference",ref || "--"]].map(([l, v], i) => (
                   <View key={l} style={[s.confRow, i > 0 && s.bt]}>
                     <Text style={s.confLbl}>{l}</Text>
                     <Text style={[s.confVal, l === "Amount" && { color: WARNING, fontSize: 17, fontWeight: "800" }]}>{v}</Text>
@@ -251,7 +247,7 @@ export default function PayRent() {
                 onPressIn={() => btnSc.value = withSpring(0.97, { damping: 15 })}
                 onPressOut={() => btnSc.value = withSpring(1, { damping: 15 })}
               >
-                <Text style={s.payTxt}>{busy ? "Processing…" : step === "confirm" ? "Confirm & Pay  ✓" : "Pay £1,250  →"}</Text>
+                <Text style={s.payTxt}>{busy ? "Processing…" : step === "confirm" ? "Confirm & Pay  ✓" : "Pay Rent  →"}</Text>
               </TouchableOpacity>
             </Animated.View>
           </FadeIn>

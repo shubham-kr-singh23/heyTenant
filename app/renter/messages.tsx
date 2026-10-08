@@ -25,30 +25,15 @@ const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
 const CONTACTS = [
-  { id: "pm",  name: "Property Manager", role: "Management Office", icon: "🏢", color: ACCENT_LIGHT, online: true  },
-  { id: "ll",  name: "John Davies",      role: "Landlord",          icon: "👤", color: TEAL,         online: true  },
+  { id: "pm",  name: "Property Manager", role: "Management Office", icon: "🏢", color: ACCENT_LIGHT, online: false },
+  { id: "ll",  name: "Landlord",         role: "Landlord",          icon: "👤", color: TEAL,         online: false },
   { id: "mt",  name: "Maintenance Team", role: "Repairs & Service", icon: "🔧", color: WARNING,      online: false },
   { id: "em",  name: "Emergency Line",   role: "24/7 Support",      icon: "🚨", color: DANGER,       online: true  },
 ];
 
 type Msg = { id: string; text: string; mine: boolean; time: string };
 const SEED: Record<string, Msg[]> = {
-  pm: [
-    { id: "1", text: "Hi Alex, your boiler service is confirmed for Dec 22 between 9am–12pm.", mine: false, time: "10:12 AM" },
-    { id: "2", text: "A HeatPro engineer will attend. Please ensure access.", mine: false, time: "10:12 AM" },
-    { id: "3", text: "Thanks! I'll be home. Anything I need to prepare?", mine: true,  time: "10:35 AM" },
-    { id: "4", text: "Just clear space near the boiler. See you then!", mine: false, time: "10:41 AM" },
-  ],
-  ll: [
-    { id: "1", text: "Your December rent statement is ready in Documents.", mine: false, time: "2 hrs ago" },
-    { id: "2", text: "Got it, thanks. Is the January amount the same?", mine: true, time: "1 hr ago" },
-  ],
-  mt: [
-    { id: "1", text: "A plumber is assigned to your kitchen tap. ETA tomorrow 9am–11am.", mine: false, time: "Yesterday" },
-    { id: "2", text: "Perfect, I'll be home.", mine: true, time: "Yesterday" },
-    { id: "3", text: "The plumber will call 30 mins before arrival.", mine: false, time: "Yesterday" },
-  ],
-  em: [],
+  pm: [], ll: [], mt: [], em: [],
 };
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
@@ -138,7 +123,6 @@ export default function Messages() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} activeOpacity={0.7}><Text style={s.backArrow}>‹</Text></TouchableOpacity>
         <View style={s.hCenter}>
           <Text style={s.hTitle}>Messages</Text>
-          <View style={s.unreadPill}><Text style={s.unreadTxt}>2 unread</Text></View>
         </View>
         <View style={{ width: 38 }} />
       </Animated.View>

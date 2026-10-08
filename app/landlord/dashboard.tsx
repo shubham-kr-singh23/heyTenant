@@ -18,6 +18,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useUser } from "@clerk/expo";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BRAND_BLUE   = "#1A3C5E";
@@ -40,46 +41,28 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-// ─── Static mock data ─────────────────────────────────────────────────────────
+// ─── Static data ──────────────────────────────────────────────────────────────
 const QUICK_STATS = [
-  { label: "Properties",  value: "12", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
-  { label: "Tenants",     value: "38", icon: "\uD83D\uDC65", color: SUCCESS,       bg: SUCCESS_BG             },
-  { label: "Maintenance", value: "5",  icon: "\uD83D\uDD27", color: WARNING,       bg: WARNING_BG             },
-  { label: "Vacancies",   value: "3",  icon: "\uD83D\uDEAA", color: DANGER,        bg: DANGER_BG              },
+  { label: "Properties",  value: "--", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Tenants",     value: "--", icon: "\uD83D\uDC65", color: SUCCESS,       bg: SUCCESS_BG             },
+  { label: "Maintenance", value: "--", icon: "\uD83D\uDD27", color: WARNING,       bg: WARNING_BG             },
+  { label: "Vacancies",   value: "--", icon: "\uD83D\uDEAA", color: DANGER,        bg: DANGER_BG              },
 ];
 
-const RECENT_ACTIVITIES = [
-  { id: "1", icon: "\uD83D\uDCB0", title: "Rent Received",        desc: "Unit 4B \u2013 Oak Street",          time: "2 min ago",  color: SUCCESS      },
-  { id: "2", icon: "\uD83D\uDD27", title: "Maintenance Request",  desc: "Plumbing \u2013 Maple Ave, Unit 2A", time: "18 min ago", color: WARNING      },
-  { id: "3", icon: "\uD83D\uDCC4", title: "Lease Expiring Soon",  desc: "Cedar Lane, Unit 7C \u2013 14 days", time: "1 hr ago",   color: DANGER       },
-  { id: "4", icon: "\uD83D\uDCAC", title: "New Message",          desc: "Sarah K. \u2013 Rent receipt query", time: "3 hrs ago",  color: ACCENT_LIGHT },
-  { id: "5", icon: "\uD83C\uDFE0", title: "Inspection Completed", desc: "Birch St, Unit 1A \u2013 All clear",  time: "Yesterday",  color: PURPLE       },
-];
-
-const MAINTENANCE_ITEMS = [
-  { id: "1", unit: "Oak St 4B",    issue: "Water heater broken",   priority: "High",   status: "In Progress", days: 2 },
-  { id: "2", unit: "Maple Ave 2A", issue: "Blocked drain",         priority: "High",   status: "Open",        days: 1 },
-  { id: "3", unit: "Cedar Ln 7C",  issue: "Window latch loose",    priority: "Medium", status: "Open",        days: 4 },
-  { id: "4", unit: "Birch St 3D",  issue: "Paint touch-up needed", priority: "Low",    status: "Scheduled",   days: 7 },
-];
-
-const UPCOMING_EVENTS = [
-  { id: "1", title: "Lease renewal \u2013 Oak St 4B",       date: "Dec 22", color: ACCENT_LIGHT },
-  { id: "2", title: "Annual inspection \u2013 Maple Ave",    date: "Dec 24", color: PURPLE       },
-  { id: "3", title: "Contractor visit \u2013 Cedar Ln",      date: "Dec 26", color: WARNING      },
-  { id: "4", title: "New tenant move-in \u2013 Birch St 1A", date: "Jan 2",  color: SUCCESS      },
-];
+const RECENT_ACTIVITIES: { id: string; icon: string; title: string; desc: string; time: string; color: string }[] = [];
+const MAINTENANCE_ITEMS: { id: string; unit: string; issue: string; priority: string; status: string; days: number }[] = [];
+const UPCOMING_EVENTS:   { id: string; title: string; date: string; color: string }[] = [];
 
 const OCCUPANCY_DATA = [
-  { month: "Jul", rate: 83 },
-  { month: "Aug", rate: 88 },
-  { month: "Sep", rate: 92 },
-  { month: "Oct", rate: 90 },
-  { month: "Nov", rate: 95 },
-  { month: "Dec", rate: 75 },
+  { month: "Jul", rate: 0 },
+  { month: "Aug", rate: 0 },
+  { month: "Sep", rate: 0 },
+  { month: "Oct", rate: 0 },
+  { month: "Nov", rate: 0 },
+  { month: "Dec", rate: 0 },
 ];
 
-const REVENUE_DATA   = [28400, 31200, 29800, 33500, 35100, 34200];
+const REVENUE_DATA   = [0, 0, 0, 0, 0, 0];
 const REVENUE_MONTHS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function priorityColor(p: string) {
@@ -227,10 +210,27 @@ const dn = StyleSheet.create({
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0]?.slice(0, 2).toUpperCase() ?? "?";
+}
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function LandlordDashboard() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const router  = useRouter();
+  const insets  = useSafeAreaInsets();
+  const { user } = useUser();
   const [activeTab, setActiveTab] = useState<"overview" | "properties" | "tenants" | "finance">("overview");
+
+  const displayName = user?.fullName ?? user?.username ?? "there";
+  const initials    = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
 
   const headerOpacity    = useSharedValue(0);
   const headerTranslateY = useSharedValue(-16);
@@ -260,10 +260,10 @@ export default function LandlordDashboard() {
       {/* Header */}
       <Animated.View style={[s.header, { paddingTop }, headerStyle]}>
         <TouchableOpacity style={s.hLeft} onPress={() => router.push("/landlord/profile")} activeOpacity={0.8}>
-          <View style={s.avatar}><Text style={s.avatarTxt}>JD</Text></View>
+          <View style={s.avatar}><Text style={s.avatarTxt}>{initials}</Text></View>
           <View>
-            <Text style={s.greeting}>Good morning</Text>
-            <Text style={s.userName}>John Davies</Text>
+            <Text style={s.greeting}>{getGreeting()}</Text>
+            <Text style={s.userName}>{displayName}</Text>
           </View>
         </TouchableOpacity>
         <View style={s.hRight}>
@@ -318,17 +318,14 @@ export default function LandlordDashboard() {
             <View style={[s.card, s.half]}>
               <View style={s.cardRow}>
                 <Text style={s.cardTitle}>Revenue</Text>
-                <View style={[s.pill, { backgroundColor: SUCCESS_BG }]}>
-                  <Text style={[s.pillTxt, { color: SUCCESS }]}>+8.4%</Text>
-                </View>
               </View>
-              <Text style={s.bigVal}>{"\u00A3"}34,200</Text>
+              <Text style={s.bigVal}>--</Text>
               <Text style={s.cardSub}>This month</Text>
-              <RevenueSparkline />
             </View>
             <View style={[s.card, s.half]}>
               <Text style={s.cardTitle}>Occupancy</Text>
-              <View style={{ marginTop: 8 }}><DonutSummary /></View>
+              <Text style={[s.bigVal, { marginTop: 8 }]}>--%</Text>
+              <Text style={s.cardSub}>No data yet</Text>
             </View>
           </View>
         </FadeIn>
@@ -344,27 +341,27 @@ export default function LandlordDashboard() {
         {/* Rent collection */}
         <FadeIn delay={220}>
           <View style={s.card}>
-            <SectionHeader title="Rent Collection — Dec" />
+            <SectionHeader title="Rent Collection" />
             <View style={s.rentRow}>
               <View style={s.rentStat}>
-                <Text style={[s.rentVal, { color: SUCCESS }]}>28</Text>
+                <Text style={[s.rentVal, { color: SUCCESS }]}>--</Text>
                 <Text style={s.rentLbl}>Collected</Text>
               </View>
               <View style={s.rentDiv} />
               <View style={s.rentStat}>
-                <Text style={[s.rentVal, { color: WARNING }]}>6</Text>
+                <Text style={[s.rentVal, { color: WARNING }]}>--</Text>
                 <Text style={s.rentLbl}>Pending</Text>
               </View>
               <View style={s.rentDiv} />
               <View style={s.rentStat}>
-                <Text style={[s.rentVal, { color: DANGER }]}>4</Text>
+                <Text style={[s.rentVal, { color: DANGER }]}>--</Text>
                 <Text style={s.rentLbl}>Overdue</Text>
               </View>
             </View>
             <View style={s.progTrack}>
-              <View style={[s.progFill, { width: "73%", backgroundColor: SUCCESS }]} />
+              <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
             </View>
-            <Text style={s.progLbl}>73% of tenants paid this month</Text>
+            <Text style={s.progLbl}>No rent data available yet</Text>
           </View>
         </FadeIn>
 
@@ -372,23 +369,9 @@ export default function LandlordDashboard() {
         <FadeIn delay={280}>
           <View style={s.card}>
             <SectionHeader title="Maintenance Requests" action="View all" />
-            {MAINTENANCE_ITEMS.map((item, i) => (
-              <TouchableOpacity key={item.id} style={[s.maintItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
-                <View style={s.maintLeft}>
-                  <View style={[s.priorDot, { backgroundColor: priorityColor(item.priority) }]} />
-                  <View>
-                    <Text style={s.maintUnit}>{item.unit}</Text>
-                    <Text style={s.maintIssue}>{item.issue}</Text>
-                  </View>
-                </View>
-                <View style={s.maintRight}>
-                  <View style={[s.statusBadge, { backgroundColor: `${statusColor(item.status)}22` }]}>
-                    <Text style={[s.statusTxt, { color: statusColor(item.status) }]}>{item.status}</Text>
-                  </View>
-                  <Text style={s.daysAgo}>{item.days}d ago</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
+            <View style={s.emptyState}>
+              <Text style={s.emptyTxt}>No maintenance requests yet</Text>
+            </View>
           </View>
         </FadeIn>
 
@@ -396,18 +379,9 @@ export default function LandlordDashboard() {
         <FadeIn delay={340}>
           <View style={s.card}>
             <SectionHeader title="Recent Activity" action="See all" />
-            {RECENT_ACTIVITIES.map((act, i) => (
-              <View key={act.id} style={[s.actItem, i < RECENT_ACTIVITIES.length - 1 && s.actBorder]}>
-                <View style={[s.actIcon, { backgroundColor: `${act.color}18` }]}>
-                  <Text style={s.actIconTxt}>{act.icon}</Text>
-                </View>
-                <View style={s.actBody}>
-                  <Text style={s.actTitle}>{act.title}</Text>
-                  <Text style={s.actDesc}>{act.desc}</Text>
-                </View>
-                <Text style={s.actTime}>{act.time}</Text>
-              </View>
-            ))}
+            <View style={s.emptyState}>
+              <Text style={s.emptyTxt}>No recent activity</Text>
+            </View>
           </View>
         </FadeIn>
 
@@ -415,15 +389,9 @@ export default function LandlordDashboard() {
         <FadeIn delay={400}>
           <View style={s.card}>
             <SectionHeader title="Upcoming Events" action="Calendar" />
-            {UPCOMING_EVENTS.map((ev, i) => (
-              <TouchableOpacity key={ev.id} style={[s.evItem, i < UPCOMING_EVENTS.length - 1 && s.evBorder]} activeOpacity={0.7}>
-                <View style={[s.evDot, { backgroundColor: ev.color }]} />
-                <Text style={s.evTitle}>{ev.title}</Text>
-                <View style={[s.evDateBadge, { backgroundColor: `${ev.color}20` }]}>
-                  <Text style={[s.evDate, { color: ev.color }]}>{ev.date}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
+            <View style={s.emptyState}>
+              <Text style={s.emptyTxt}>No upcoming events</Text>
+            </View>
           </View>
         </FadeIn>
 
@@ -512,6 +480,9 @@ const s = StyleSheet.create({
   progTrack:{ height: 6, backgroundColor: WHITE_08, borderRadius: 3, overflow: "hidden", marginTop: 4 },
   progFill: { height: 6, borderRadius: 3 },
   progLbl:  { fontSize: 11, color: WHITE_40, marginTop: 6, textAlign: "center" },
+
+  emptyState:  { paddingVertical: 16, alignItems: "center" as const },
+  emptyTxt:    { fontSize: 13, color: WHITE_40 },
 
   borderTop:   { borderTopWidth: 1, borderTopColor: WHITE_08 },
   maintItem:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },

@@ -36,24 +36,19 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
   return <Animated.View style={useAnimatedStyle(() => ({ opacity: op.value, transform: [{ translateY: ty.value }] }))}>{children}</Animated.View>;
 }
 
-// Lease timeline bar
+// Lease timeline bar — shown as empty until real lease data is available
 function LeaseTimeline() {
-  const startMs = new Date("2024-01-15").getTime();
-  const endMs   = new Date("2025-01-15").getTime();
-  const nowMs   = new Date().getTime();
-  const pct     = Math.min(Math.max(Math.round(((nowMs - startMs) / (endMs - startMs)) * 100), 0), 100);
   const prog = useSharedValue(0);
-  useEffect(() => { prog.value = withDelay(300, withTiming(pct / 100, { duration: 800, easing: Easing.out(Easing.cubic) })); }, []);
-  const fillStyle = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` as any, height: 8, backgroundColor: pct > 85 ? DANGER : pct > 60 ? WARNING : TEAL, borderRadius: 4 }));
+  const fillStyle = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` as any, height: 8, backgroundColor: TEAL, borderRadius: 4 }));
   return (
     <View>
       <View style={{ height: 8, backgroundColor: WHITE_08, borderRadius: 4, overflow: "hidden" }}>
         <Animated.View style={fillStyle} />
       </View>
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
-        <Text style={{ fontSize: 11, color: WHITE_40 }}>15 Jan 2024</Text>
-        <Text style={{ fontSize: 11, fontWeight: "700", color: pct > 85 ? DANGER : WARNING }}>{pct}% elapsed</Text>
-        <Text style={{ fontSize: 11, color: pct > 85 ? DANGER : WARNING, fontWeight: "700" }}>15 Jan 2025</Text>
+        <Text style={{ fontSize: 11, color: WHITE_40 }}>--</Text>
+        <Text style={{ fontSize: 11, fontWeight: "700", color: WHITE_40 }}>No data</Text>
+        <Text style={{ fontSize: 11, color: WHITE_40, fontWeight: "700" }}>--</Text>
       </View>
     </View>
   );
@@ -79,16 +74,6 @@ export default function LeaseInfo() {
 
       <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]} showsVerticalScrollIndicator={false}>
 
-        {/* Renewal alert */}
-        <FadeIn delay={0}>
-          <View style={s.renewalAlert}>
-            <Text style={{ fontSize: 20 }}>⏰</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={s.renewalTitle}>Renewal Deadline Approaching</Text>
-              <Text style={s.renewalBody}>Your lease expires in <Text style={{ color: DANGER, fontWeight: "700" }}>31 days</Text>. Please contact your landlord to confirm renewal.</Text>
-            </View>
-          </View>
-        </FadeIn>
 
         {/* Property summary */}
         <FadeIn delay={60}>
@@ -97,8 +82,8 @@ export default function LeaseInfo() {
             <View style={s.propRow}>
               <View style={s.propIconBox}><Text style={{ fontSize: 28 }}>🏢</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={s.propName}>Apt 4B — Oak Street</Text>
-                <Text style={s.propAddr}>12 Oak Street, London, E1 5TW</Text>
+                <Text style={s.propName}>--</Text>
+                <Text style={s.propAddr}>No property assigned yet</Text>
                 <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
                   <View style={[s.propTag, { backgroundColor: TEAL_BG }]}><Text style={[s.propTagTxt, { color: TEAL }]}>Active Lease</Text></View>
                   <View style={[s.propTag, { backgroundColor: PURPLE_BG }]}><Text style={[s.propTagTxt, { color: PURPLE }]}>2-Bed</Text></View>
@@ -114,7 +99,7 @@ export default function LeaseInfo() {
           <View style={s.card}>
             <Text style={s.cardTitle}>Lease Period</Text>
             <View style={{ flexDirection: "row", justifyContent: "space-around", marginBottom: 16 }}>
-              {[["Start", "15 Jan 2024", WHITE_72], ["End", "15 Jan 2025", WARNING], ["Type", "AST 12-Month", TEAL]].map(([l, v, c]) => (
+              {[["Start", "--", WHITE_72], ["End", "--", WHITE_40], ["Type", "--", TEAL]].map(([l, v, c]) => (
                 <View key={l as string} style={{ alignItems: "center", gap: 4 }}>
                   <Text style={{ fontSize: 15, fontWeight: "700", color: c as string }}>{v}</Text>
                   <Text style={{ fontSize: 10, color: WHITE_40 }}>{l}</Text>
@@ -130,10 +115,10 @@ export default function LeaseInfo() {
           <View style={s.card}>
             <Text style={s.cardTitle}>Financial Terms</Text>
             {[
-              ["Monthly Rent",    "£1,250",   WARNING,      "Payable 1st of each month"],
-              ["Security Deposit","£2,500",   ACCENT_LIGHT, "Protected · MyDeposits scheme"],
-              ["Late Fee",        "£25/day",  DANGER,       "Applies after 7 days overdue"],
-              ["Notice Period",   "1 Month",  TEAL,         "Written notice required"],
+              ["Monthly Rent",    "--",  WARNING,      "Payable 1st of each month"],
+              ["Security Deposit","--",  ACCENT_LIGHT, "Protected · MyDeposits scheme"],
+              ["Late Fee",        "--",  DANGER,       "Applies after 7 days overdue"],
+              ["Notice Period",   "--",  TEAL,         "Written notice required"],
             ].map(([l, v, c, sub], i) => (
               <View key={l as string} style={[s.finRow, i > 0 && s.bt]}>
                 <View style={{ flex: 1 }}>

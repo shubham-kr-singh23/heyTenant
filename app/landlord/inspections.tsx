@@ -30,21 +30,8 @@ const WHITE_05     = "rgba(255,255,255,0.05)";
 const INSPECTION_TABS = ["Scheduled", "In Progress", "Completed"] as const;
 type InspTab = typeof INSPECTION_TABS[number];
 
-const PROPERTIES = [
-  { id: "1", name: "Oak Street 4B",    tenant: "Alex Lee",     lastInspected: "Jun 2024" },
-  { id: "2", name: "Maple Ave 2A",     tenant: "Sarah Khan",   lastInspected: "Mar 2024" },
-  { id: "3", name: "Cedar Ln 7C",      tenant: "James Patel",  lastInspected: "Aug 2024" },
-  { id: "4", name: "Birch St 3D",      tenant: "Maria Garcia", lastInspected: "Sep 2024" },
-];
-
-const INSPECTIONS = [
-  { id: "1", property: "Oak Street 4B",  tenant: "Alex Lee",     date: "22 Dec 2024", time: "10:00 AM", inspector: "Mike Ross",    status: "Scheduled",   type: "Routine",  result: null   },
-  { id: "2", property: "Maple Ave 2A",   tenant: "Sarah Khan",   date: "24 Dec 2024", time: "2:00 PM",  inspector: "Mike Ross",    status: "Scheduled",   type: "Pre-exit", result: null   },
-  { id: "3", property: "Cedar Ln 7C",    tenant: "James Patel",  date: "20 Dec 2024", time: "11:30 AM", inspector: "Lisa Turner",  status: "In Progress", type: "Routine",  result: null   },
-  { id: "4", property: "Birch St 1A",    tenant: "New Tenant",   date: "10 Dec 2024", time: "9:00 AM",  inspector: "Lisa Turner",  status: "Completed",   type: "Move-in",  result: "Pass" },
-  { id: "5", property: "Oak Street 2A",  tenant: "Tom Williams", date: "5 Dec 2024",  time: "3:00 PM",  inspector: "Mike Ross",    status: "Completed",   type: "Routine",  result: "Fail" },
-  { id: "6", property: "Maple Ave 4B",   tenant: "Helen Wu",     date: "1 Dec 2024",  time: "1:00 PM",  inspector: "Lisa Turner",  status: "Completed",   type: "Pre-exit", result: "Pass" },
-];
+const PROPERTIES: { id: string; name: string; tenant: string; lastInspected: string }[] = [];
+const INSPECTIONS: { id: string; property: string; tenant: string; date: string; time: string; inspector: string; status: string; type: string; result: string | null }[] = [];
 
 const CHECKLIST_CATEGORIES = [
   { name: "General Condition",  items: ["Walls & ceilings intact", "Floors undamaged", "Windows functional", "Doors & locks working"] },

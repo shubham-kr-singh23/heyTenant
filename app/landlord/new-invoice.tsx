@@ -34,21 +34,8 @@ const INVOICE_TYPES = [
   { id: "other",       label: "Other",           icon: "📄", color: WHITE_72     },
 ];
 
-const TENANTS = [
-  { id: "1", name: "Alex Lee",      unit: "Oak St 4B",    rent: "£1,250" },
-  { id: "2", name: "Sarah Khan",    unit: "Maple Ave 2A", rent: "£1,100" },
-  { id: "3", name: "James Patel",   unit: "Cedar Ln 7C",  rent: "£1,350" },
-  { id: "4", name: "Maria Garcia",  unit: "Birch St 3D",  rent: "£950"   },
-  { id: "5", name: "Tom Williams",  unit: "Oak St 2A",    rent: "£1,200" },
-];
-
-const RECENT_INVOICES = [
-  { id: "INV-0042", tenant: "Alex Lee",     type: "Rent",    amount: "£1,250", date: "1 Dec 2024", status: "Paid"    },
-  { id: "INV-0041", tenant: "Sarah Khan",   type: "Rent",    amount: "£1,100", date: "1 Dec 2024", status: "Paid"    },
-  { id: "INV-0040", tenant: "James Patel",  type: "Late Fee",amount: "£50",    date: "8 Nov 2024", status: "Pending" },
-  { id: "INV-0039", tenant: "Maria Garcia", type: "Rent",    amount: "£950",   date: "1 Nov 2024", status: "Overdue" },
-  { id: "INV-0038", tenant: "Tom Williams", type: "Deposit", amount: "£2,400", date: "5 Oct 2024", status: "Paid"    },
-];
+const TENANTS: { id: string; name: string; unit: string; rent: string }[] = [];
+const RECENT_INVOICES: { id: string; tenant: string; type: string; amount: string; date: string; status: string }[] = [];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(18);
@@ -156,9 +143,12 @@ export default function NewInvoice() {
                 <View style={s.card}>
                   <View style={s.cardHeaderRow}>
                     <Text style={s.cardTitle}>Recent Invoices</Text>
-                    <Text style={s.cardSub}>Last 5</Text>
                   </View>
-                  {RECENT_INVOICES.map((inv, i) => (
+                  {RECENT_INVOICES.length === 0 ? (
+                    <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                      <Text style={{ color: "rgba(255,255,255,0.40)", fontSize: 13 }}>No invoices yet</Text>
+                    </View>
+                  ) : RECENT_INVOICES.map((inv, i) => (
                     <TouchableOpacity key={inv.id} style={[s.invRow, i > 0 && s.borderTop]} activeOpacity={0.7}>
                       <View style={s.invLeft}>
                         <Text style={s.invId}>{inv.id}</Text>
@@ -179,8 +169,8 @@ export default function NewInvoice() {
               <FadeIn delay={80}>
                 <View style={s.twoCol}>
                   {[
-                    { label: "Total Invoiced", value: "£47,350", color: ACCENT_LIGHT },
-                    { label: "Outstanding",    value: "£2,800",  color: DANGER        },
+                    { label: "Total Invoiced", value: "--", color: ACCENT_LIGHT },
+                    { label: "Outstanding",    value: "--", color: DANGER        },
                   ].map((k) => (
                     <View key={k.label} style={[s.card, s.half, { alignItems: "center" }]}>
                       <Text style={[s.bigVal, { color: k.color }]}>{k.value}</Text>
@@ -212,7 +202,11 @@ export default function NewInvoice() {
               <FadeIn delay={80}>
                 <View style={s.card}>
                   <Text style={s.cardTitle}>Bill To</Text>
-                  {TENANTS.map((t, i) => (
+                  {TENANTS.length === 0 ? (
+                    <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                      <Text style={{ color: "rgba(255,255,255,0.40)", fontSize: 13 }}>No tenants added yet</Text>
+                    </View>
+                  ) : TENANTS.map((t, i) => (
                     <TouchableOpacity key={t.id} onPress={() => setTenant(t.id)} activeOpacity={0.75}
                       style={[s.tenantRow, i > 0 && s.borderTop, selectedTenant === t.id && s.tenantActive]}>
                       <View style={[s.radio, selectedTenant === t.id && s.radioActive]} />

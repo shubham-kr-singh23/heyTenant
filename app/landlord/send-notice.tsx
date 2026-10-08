@@ -35,19 +35,13 @@ const NOTICE_TYPES = [
 ];
 
 const RECIPIENTS = [
-  { id: "all",      label: "All Tenants",         count: 38  },
-  { id: "overdue",  label: "Overdue Rent",         count: 4   },
-  { id: "expiring", label: "Expiring Leases",      count: 3   },
+  { id: "all",      label: "All Tenants",         count: null },
+  { id: "overdue",  label: "Overdue Rent",         count: null },
+  { id: "expiring", label: "Expiring Leases",      count: null },
   { id: "custom",   label: "Select Individually",  count: null },
 ];
 
-const TENANTS = [
-  { id: "1", name: "Alex Lee",      unit: "Oak St 4B"    },
-  { id: "2", name: "Sarah Khan",    unit: "Maple Ave 2A" },
-  { id: "3", name: "James Patel",   unit: "Cedar Ln 7C"  },
-  { id: "4", name: "Maria Garcia",  unit: "Birch St 3D"  },
-  { id: "5", name: "Tom Williams",  unit: "Oak St 2A"    },
-];
+const TENANTS: { id: string; name: string; unit: string }[] = [];
 
 const TEMPLATES: Record<string, { subject: string; body: string }> = {
   rent:        { subject: "Rent Reminder — January 2025", body: "Dear Tenant,\n\nThis is a friendly reminder that your rent is due on the 1st of this month.\n\nPlease ensure payment is made on time to avoid late charges.\n\nThank you,\nProperty Management" },

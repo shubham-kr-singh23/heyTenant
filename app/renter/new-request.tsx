@@ -43,10 +43,7 @@ const PRIORITIES = [
   { id: "low",       label: "Low",        desc: "Minor or cosmetic, non-urgent",        color: SUCCESS,      bg: SUCCESS_BG },
 ];
 
-const OPEN_REQUESTS = [
-  { id: "1", issue: "Leaking tap — kitchen",    color: WARNING },
-  { id: "2", issue: "Bathroom extractor noisy", color: DANGER  },
-];
+const OPEN_REQUESTS: { id: string; issue: string; color: string }[] = [];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(18);
@@ -139,7 +136,7 @@ export default function NewRequest() {
       <StatusBar barStyle="light-content" backgroundColor={BRAND_DEEP} translucent={false} />
       <Animated.View style={[s.header, { paddingTop: pt }, hStyle]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} activeOpacity={0.7}><Text style={s.backArrow}>‹</Text></TouchableOpacity>
-        <View style={s.hCenter}><Text style={s.hTitle}>New Request</Text><Text style={s.hSub}>Apt 4B — Oak Street</Text></View>
+        <View style={s.hCenter}><Text style={s.hTitle}>New Request</Text><Text style={s.hSub}>Maintenance request</Text></View>
         <View style={{ width: 38 }} />
       </Animated.View>
 
@@ -150,7 +147,9 @@ export default function NewRequest() {
             <View style={s.openStrip}>
               <Text style={s.openLabel}>YOUR OPEN REQUESTS</Text>
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                {OPEN_REQUESTS.map(r => (
+                {OPEN_REQUESTS.length === 0 ? (
+                  <Text style={{ color: WHITE_40, fontSize: 12 }}>No open requests</Text>
+                ) : OPEN_REQUESTS.map(r => (
                   <View key={r.id} style={[s.openBadge, { borderColor: `${r.color}30`, backgroundColor: `${r.color}12` }]}>
                     <View style={[s.openDot, { backgroundColor: r.color }]} />
                     <Text style={[s.openTxt, { color: r.color }]} numberOfLines={1}>{r.issue}</Text>

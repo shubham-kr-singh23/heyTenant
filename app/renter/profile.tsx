@@ -6,7 +6,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { useClerk } from "@clerk/expo";
+import { useClerk, useUser } from "@clerk/expo";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -31,41 +31,7 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-const PROFILE = {
-  name:        "Alex Lee",
-  initials:    "AL",
-  email:       "alex.lee@email.com",
-  phone:       "+44 7700 900123",
-  occupation:  "Software Engineer",
-  employer:    "TechCorp Ltd.",
-  memberSince: "January 2024",
-  rating:      "4.8",
-  emergencyContact: { name: "Jamie Lee", relation: "Sibling", phone: "+44 7700 900456" },
-};
-
-const LEASE = {
-  property:   "Apt 4B \u2014 Oak Street",
-  address:    "12 Oak Street, London, E1 5TW",
-  bedrooms:   "2-Bed",
-  start:      "1 Jan 2024",
-  end:        "31 Jan 2025",
-  monthly:    "\u00A31,250",
-  deposit:    "\u00A31,875",
-  depositRef: "DPS-2024-00481",
-  landlord:   "John Davies",
-  llPhone:    "+44 7911 123456",
-  llEmail:    "john.davies@email.com",
-  agent:      "Oak Property Management",
-  agentPhone: "020 7946 0001",
-};
-
-const PAYMENT_HISTORY = [
-  { id: "1", month: "November 2024",  amount: "\u00A31,250", date: "1 Nov",  status: "Paid" },
-  { id: "2", month: "October 2024",   amount: "\u00A31,250", date: "1 Oct",  status: "Paid" },
-  { id: "3", month: "September 2024", amount: "\u00A31,250", date: "3 Sep",  status: "Late" },
-  { id: "4", month: "August 2024",    amount: "\u00A31,250", date: "1 Aug",  status: "Paid" },
-  { id: "5", month: "July 2024",      amount: "\u00A31,250", date: "1 Jul",  status: "Paid" },
-];
+const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
 
 const DOCUMENTS = [
   { id: "1", icon: "\uD83D\uDCC4", label: "Tenancy Agreement",      sub: "Jan 2024",   color: ACCENT_LIGHT },
@@ -155,10 +121,28 @@ const pb = StyleSheet.create({
   txt:  { fontSize: 11, fontWeight: "700" },
 });
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0]?.slice(0, 2).toUpperCase() ?? "?";
+}
+
 export default function RenterProfile() {
-  const router = useRouter();
+  const router      = useRouter();
   const { signOut } = useClerk();
+  const { user }    = useUser();
   const [signingOut, setSigningOut] = useState(false);
+
+  const displayName  = user?.fullName ?? user?.username ?? "--";
+  const initials     = user?.fullName ? getInitials(user.fullName)
+                     : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
+  const email        = user?.primaryEmailAddress?.emailAddress ?? "--";
+  const phone        = (user?.unsafeMetadata?.phone as string | undefined) ?? "--";
+  const occupation   = (user?.unsafeMetadata?.occupation as string | undefined) ?? "--";
+  const employer     = (user?.unsafeMetadata?.employer as string | undefined) ?? "--";
+  const memberSince  = user?.createdAt
+    ? new Date(user.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+    : "--";
 
   const handleSignOut = () => {
     Alert.alert(
@@ -249,37 +233,37 @@ export default function RenterProfile() {
         <FadeIn delay={0}>
           <View style={s.heroCard}>
             <View style={s.avatarOuter}>
-              <View style={s.avatar}><Text style={s.avatarTxt}>{PROFILE.initials}</Text></View>
+              <View style={s.avatar}><Text style={s.avatarTxt}>{initials}</Text></View>
               <View style={s.onlineDot} />
             </View>
-            <Text style={s.nameText}>{PROFILE.name}</Text>
+            <Text style={s.nameText}>{displayName}</Text>
             <View style={s.heroBadgeRow}>
               <View style={s.tenantBadge}>
                 <Text style={s.tenantBadgeIcon}>{"\uD83C\uDFE0"}</Text>
                 <Text style={s.tenantBadgeTxt}>Verified Tenant</Text>
               </View>
               <View style={s.memberBadge}>
-                <Text style={s.memberBadgeTxt}>Since {PROFILE.memberSince}</Text>
+                <Text style={s.memberBadgeTxt}>Since {memberSince}</Text>
               </View>
             </View>
             <View style={s.heroStrip}>
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>{PROFILE.rating}</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Rating</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>{pct}%</Text>
+                <Text style={s.heroStatVal}>{total > 0 ? `${pct}%` : "--"}</Text>
                 <Text style={s.heroStatLbl}>On-time Pay</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>12</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Months</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={[s.heroStatVal, { color: WARNING }]}>8d</Text>
+                <Text style={s.heroStatVal}>--</Text>
                 <Text style={s.heroStatLbl}>Rent Due</Text>
               </View>
             </View>
@@ -303,10 +287,10 @@ export default function RenterProfile() {
             <FadeIn delay={60}>
               <View style={s.card}>
                 <SectionHeader title="Personal Details" />
-                <InfoRow icon={"\u2709\uFE0F"} label="Email"      value={PROFILE.email}      onPress={() => Linking.openURL(`mailto:${PROFILE.email}`)} />
-                <InfoRow icon={"\uD83D\uDCDE"} label="Phone"      value={PROFILE.phone}      onPress={() => Linking.openURL(`tel:${PROFILE.phone}`)} />
-                <InfoRow icon={"\uD83D\uDCBC"} label="Occupation" value={PROFILE.occupation} />
-                <InfoRow icon={"\uD83C\uDFE2"} label="Employer"   value={PROFILE.employer}   last />
+                <InfoRow icon={"\u2709\uFE0F"} label="Email"      value={email}      onPress={email !== "--" ? () => Linking.openURL(`mailto:${email}`) : undefined} />
+                <InfoRow icon={"\uD83D\uDCDE"} label="Phone"      value={phone}      onPress={phone !== "--" ? () => Linking.openURL(`tel:${phone}`) : undefined} />
+                <InfoRow icon={"\uD83D\uDCBC"} label="Occupation" value={occupation} />
+                <InfoRow icon={"\uD83C\uDFE2"} label="Employer"   value={employer}   last />
               </View>
             </FadeIn>
 
@@ -314,17 +298,17 @@ export default function RenterProfile() {
               <View style={s.rentGlance}>
                 <View style={s.glanceLeft}>
                   <Text style={s.glanceLbl}>NEXT PAYMENT</Text>
-                  <Text style={s.glanceAmount}>{LEASE.monthly}</Text>
+                  <Text style={s.glanceAmount}>--</Text>
                   <View style={[s.glancePill, { backgroundColor: WARNING_BG }]}>
-                    <Text style={[s.glancePillTxt, { color: WARNING }]}>Due in 8 days</Text>
+                    <Text style={[s.glancePillTxt, { color: WARNING }]}>Not set up yet</Text>
                   </View>
                 </View>
                 <View style={s.glanceDivider} />
                 <View style={s.glanceRight}>
                   <Text style={s.glanceLbl}>DEPOSIT HELD</Text>
-                  <Text style={s.glanceAmount}>{LEASE.deposit}</Text>
+                  <Text style={s.glanceAmount}>--</Text>
                   <View style={[s.glancePill, { backgroundColor: TEAL_BG }]}>
-                    <Text style={[s.glancePillTxt, { color: TEAL }]}>DPS Protected</Text>
+                    <Text style={[s.glancePillTxt, { color: TEAL }]}>Not set up yet</Text>
                   </View>
                 </View>
               </View>
@@ -333,17 +317,8 @@ export default function RenterProfile() {
             <FadeIn delay={180}>
               <View style={s.card}>
                 <SectionHeader title="Emergency Contact" />
-                <View style={s.emergencyCard}>
-                  <View style={s.emergencyAvatar}>
-                    <Text style={s.emergencyAvatarTxt}>{PROFILE.emergencyContact.name.charAt(0)}</Text>
-                  </View>
-                  <View style={s.emergencyBody}>
-                    <Text style={s.emergencyName}>{PROFILE.emergencyContact.name}</Text>
-                    <Text style={s.emergencyRelation}>{PROFILE.emergencyContact.relation}</Text>
-                  </View>
-                  <TouchableOpacity style={s.emergencyCallBtn} onPress={() => Linking.openURL(`tel:${PROFILE.emergencyContact.phone}`)} activeOpacity={0.8}>
-                    <Text style={s.emergencyCallTxt}>{"\uD83D\uDCDE"}</Text>
-                  </TouchableOpacity>
+                <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No emergency contact added yet</Text>
                 </View>
               </View>
             </FadeIn>
@@ -370,14 +345,11 @@ export default function RenterProfile() {
               <View style={s.leaseBanner}>
                 <View style={s.leaseBannerLeft}>
                   <Text style={s.leaseBannerLabel}>ACTIVE TENANCY</Text>
-                  <Text style={s.leaseBannerProp}>{LEASE.property}</Text>
-                  <Text style={s.leaseBannerAddr}>{LEASE.address}</Text>
+                  <Text style={s.leaseBannerProp}>--</Text>
+                  <Text style={s.leaseBannerAddr}>--</Text>
                   <View style={s.leaseBannerTags}>
                     <View style={[s.leaseBannerTag, { backgroundColor: TEAL_BG }]}>
-                      <Text style={[s.leaseBannerTagTxt, { color: TEAL }]}>{LEASE.bedrooms}</Text>
-                    </View>
-                    <View style={[s.leaseBannerTag, { backgroundColor: PURPLE_BG }]}>
-                      <Text style={[s.leaseBannerTagTxt, { color: PURPLE }]}>AST</Text>
+                      <Text style={[s.leaseBannerTagTxt, { color: TEAL }]}>--</Text>
                     </View>
                   </View>
                 </View>
@@ -391,97 +363,69 @@ export default function RenterProfile() {
                 <View style={s.leaseTermRow}>
                   <View style={s.leaseTermStat}>
                     <Text style={s.leaseTermLbl}>Start Date</Text>
-                    <Text style={s.leaseTermVal}>{LEASE.start}</Text>
+                    <Text style={s.leaseTermVal}>--</Text>
                   </View>
                   <Text style={s.leaseTermArrow}>{"\u2192"}</Text>
                   <View style={s.leaseTermStat}>
                     <Text style={s.leaseTermLbl}>End Date</Text>
-                    <Text style={[s.leaseTermVal, { color: WARNING }]}>{LEASE.end}</Text>
+                    <Text style={[s.leaseTermVal, { color: WARNING }]}>--</Text>
                   </View>
                 </View>
-                <View style={s.renewalAlert}>
-                  <Text style={s.renewalIcon}>{"\u26A0\uFE0F"}</Text>
-                  <Text style={s.renewalTxt}>
-                    {"Renewal deadline: "}
-                    <Text style={{ color: DANGER, fontWeight: "700" }}>15 Jan 2025</Text>
-                    {"  \u2014  Contact your landlord to renew."}
-                  </Text>
-                </View>
                 <View style={s.leaseProgressTrack}>
-                  <View style={[s.leaseProgressFill, { width: "92%" }]} />
+                  <View style={[s.leaseProgressFill, { width: "0%" }]} />
                 </View>
-                <Text style={s.leaseProgressLbl}>92% of lease term completed</Text>
+                <Text style={s.leaseProgressLbl}>No lease data available yet</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={120}>
               <View style={s.card}>
                 <SectionHeader title="Financial Details" />
-                <InfoRow icon={"\uD83D\uDCB0"} label="Monthly Rent" value={LEASE.monthly}    />
-                <InfoRow icon={"\uD83C\uDFE6"} label="Deposit Held" value={LEASE.deposit}    />
-                <InfoRow icon={"\uD83D\uDD10"} label="Deposit Ref"  value={LEASE.depositRef} last />
+                <InfoRow icon={"\uD83D\uDCB0"} label="Monthly Rent" value="--" />
+                <InfoRow icon={"\uD83C\uDFE6"} label="Deposit Held" value="--" />
+                <InfoRow icon={"\uD83D\uDD10"} label="Deposit Ref"  value="--" last />
               </View>
             </FadeIn>
 
             <FadeIn delay={180}>
               <View style={s.card}>
                 <SectionHeader title="Landlord & Agent" />
-                <View style={s.contactCard}>
-                  <View style={[s.contactAvatar, { backgroundColor: "rgba(74,144,217,0.18)" }]}>
-                    <Text style={s.contactAvatarTxt}>JD</Text>
-                  </View>
-                  <View style={s.contactBody}>
-                    <Text style={s.contactName}>{LEASE.landlord}</Text>
-                    <Text style={s.contactRole}>Landlord</Text>
-                  </View>
-                  <View style={s.contactBtns}>
-                    <TouchableOpacity style={[s.contactBtn, { backgroundColor: TEAL_BG }]} onPress={() => Linking.openURL(`tel:${LEASE.llPhone}`)} activeOpacity={0.8}>
-                      <Text style={s.contactBtnTxt}>{"\uD83D\uDCDE"}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[s.contactBtn, { backgroundColor: "rgba(74,144,217,0.15)" }]} onPress={() => Linking.openURL(`mailto:${LEASE.llEmail}`)} activeOpacity={0.8}>
-                      <Text style={s.contactBtnTxt}>{"\u2709\uFE0F"}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={s.agentRow}>
-                  <View style={[s.contactAvatar, { backgroundColor: TEAL_BG }]}>
-                    <Text style={[s.contactAvatarTxt, { color: TEAL }]}>{"\uD83C\uDFE2"}</Text>
-                  </View>
-                  <View style={s.contactBody}>
-                    <Text style={s.contactName}>{LEASE.agent}</Text>
-                    <Text style={s.contactRole}>Managing Agent</Text>
-                  </View>
-                  <View style={s.contactBtns}>
-                    <TouchableOpacity style={[s.contactBtn, { backgroundColor: TEAL_BG }]} onPress={() => Linking.openURL(`tel:${LEASE.agentPhone}`)} activeOpacity={0.8}>
-                      <Text style={s.contactBtnTxt}>{"\uD83D\uDCDE"}</Text>
-                    </TouchableOpacity>
-                  </View>
+                <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No landlord assigned yet</Text>
                 </View>
               </View>
             </FadeIn>
 
             <FadeIn delay={240}>
               <View style={s.card}>
-                <SectionHeader title="Payment History" sub={`${paid}/${total} on time`} />
-                <View style={s.scoreBar}>
-                  <View style={[s.scoreBarFill, { width: `${pct}%` }]} />
-                </View>
-                <Text style={s.scoreBarLbl}>{pct}% on-time payment rate</Text>
-                {PAYMENT_HISTORY.map((pay, i) => (
-                  <View key={pay.id} style={[s.payRow, i > 0 && s.payBorder]}>
-                    <View style={[s.payIconWrap, { backgroundColor: pay.status === "Paid" ? SUCCESS_BG : DANGER_BG }]}>
-                      <Text style={s.payIcon}>{pay.status === "Paid" ? "\uD83D\uDCB3" : "\u23F0"}</Text>
+                <SectionHeader title="Payment History" sub={total > 0 ? `${paid}/${total} on time` : "--"} />
+                {total > 0 ? (
+                  <>
+                    <View style={s.scoreBar}>
+                      <View style={[s.scoreBarFill, { width: `${pct}%` }]} />
                     </View>
-                    <View style={s.payBody}>
-                      <Text style={s.payMonth}>{pay.month}</Text>
-                      <Text style={s.payDate}>{pay.date}</Text>
-                    </View>
-                    <View style={s.payRight}>
-                      <Text style={s.payAmount}>{pay.amount}</Text>
-                      <PayStatusBadge status={pay.status} />
-                    </View>
+                    <Text style={s.scoreBarLbl}>{pct}% on-time payment rate</Text>
+                    {PAYMENT_HISTORY.map((pay, i) => (
+                      <View key={pay.id} style={[s.payRow, i > 0 && s.payBorder]}>
+                        <View style={[s.payIconWrap, { backgroundColor: pay.status === "Paid" ? SUCCESS_BG : DANGER_BG }]}>
+                          <Text style={s.payIcon}>{pay.status === "Paid" ? "\uD83D\uDCB3" : "\u23F0"}</Text>
+                        </View>
+                        <View style={s.payBody}>
+                          <Text style={s.payMonth}>{pay.month}</Text>
+                          <Text style={s.payDate}>{pay.date}</Text>
+                        </View>
+                        <View style={s.payRight}>
+                          <Text style={s.payAmount}>{pay.amount}</Text>
+                          <PayStatusBadge status={pay.status} />
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                ) : (
+                  <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                    <Text style={{ color: WHITE_40, fontSize: 13 }}>No payment history yet</Text>
                   </View>
-                ))}
+                )}
               </View>
             </FadeIn>
           </>
