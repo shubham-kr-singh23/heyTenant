@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   StatusBar,
   useWindowDimensions,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -18,7 +19,8 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { useUser } from "@clerk/expo";
+import { useUser, useAuth, useClerk } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BRAND_BLUE   = "#1A3C5E";
@@ -186,11 +188,66 @@ function getGreeting(): string {
   return "Good evening";
 }
 
+type LeaseRecord = {
+  _id: string;
+  leaseStart: string;
+  leaseEnd: string;
+  monthlyRent: number;
+  status: string;
+  property?: {
+    _id: string;
+    name: string;
+    addressLine1: string;
+    city: string;
+    postcode: string;
+    propertyType: string;
+    furnishing: string;
+    bedrooms: number;
+    bathrooms?: number;
+    roomNumber?: string;
+    amenities?: string[];
+    description?: string;
+  };
+};
+
 export default function RenterDashboard() {
   const router    = useRouter();
   const insets    = useSafeAreaInsets();
   const { user }  = useUser();
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
+  const handleSignOut = async () => {
+    await signOut();
+    router.replace("/welcome");
+  };
   const [activeTab, setActiveTab] = useState<"home" | "payments" | "maintenance" | "messages">("home");
+
+  // ── Active lease ──────────────────────────────────────────────────────────
+  const [lease,        setLease]        = useState<LeaseRecord | null>(null);
+  const [leaseLoading, setLeaseLoading] = useState(true);
+  const [leaseError,   setLeaseError]   = useState("");
+
+  const fetchLease = useCallback(async () => {
+    setLeaseLoading(true);
+    setLeaseError("");
+    try {
+      const token = await getToken();
+      if (!token) { setLeaseLoading(false); return; }
+      const res = await fetch(`${API_URL}/api/renter/lease`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 404) { setLease(null); setLeaseLoading(false); return; }
+      const json = await res.json().catch(() => null);
+      if (!res.ok) { setLeaseError(json?.error?.message ?? "Failed to load lease."); setLeaseLoading(false); return; }
+      setLease(json?.data ?? null);
+    } catch {
+      setLeaseError("Network error.");
+    } finally {
+      setLeaseLoading(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => { fetchLease(); }, []);
 
   const displayName = user?.fullName ?? user?.username ?? "there";
   const initials    = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
@@ -288,53 +345,144 @@ export default function RenterDashboard() {
 
             {/* Rent due banner */}
             <FadeIn delay={80}>
-              <View style={[s.card, s.rentBanner]}>
-                <View style={s.rentBannerLeft}>
-                  <Text style={s.rentBannerLabel}>NEXT RENT DUE</Text>
-                  <Text style={s.rentBannerAmount}>--</Text>
-                  <Text style={s.rentBannerDate}>No lease set up yet</Text>
-                  <TouchableOpacity style={s.payNowBtn} activeOpacity={0.8}>
-                    <Text style={s.payNowTxt}>Pay Now</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={s.rentBannerRight}>
-                  <RentCountdown daysLeft={0} total={31} />
-                </View>
-              </View>
+              {(() => {
+                const rentAmt    = lease?.monthlyRent ?? 0;
+                const dueDay     = (lease as any)?.rentDueDay ?? 1;
+                const today      = new Date();
+                const dueDate    = new Date(today.getFullYear(), today.getMonth(), dueDay);
+                if (dueDate < today) dueDate.setMonth(dueDate.getMonth() + 1);
+                const msLeft     = dueDate.getTime() - today.getTime();
+                const daysLeft   = Math.max(0, Math.ceil(msLeft / 86400000));
+                const daysInMon  = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+                return (
+                  <View style={[s.card, s.rentBanner]}>
+                    <View style={s.rentBannerLeft}>
+                      <Text style={s.rentBannerLabel}>NEXT RENT DUE</Text>
+                      <Text style={s.rentBannerAmount}>
+                        {lease ? `₹${rentAmt.toLocaleString("en-IN")}` : "--"}
+                      </Text>
+                      <Text style={s.rentBannerDate}>
+                        {lease ? `Due on ${dueDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}` : "No lease set up yet"}
+                      </Text>
+                      <TouchableOpacity style={s.payNowBtn} activeOpacity={0.8} onPress={() => router.push("/renter/pay-rent")}>
+                        <Text style={s.payNowTxt}>Pay Now</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={s.rentBannerRight}>
+                      <RentCountdown daysLeft={daysLeft} total={daysInMon} />
+                    </View>
+                  </View>
+                );
+              })()}
             </FadeIn>
 
             {/* Property info */}
             <FadeIn delay={150}>
               <View style={s.card}>
-                <SectionHeader title="My Property" />
-                <View style={s.propRow}>
-                  <View style={s.propIconBox}><Text style={{ fontSize: 28 }}>🏢</Text></View>
-                  <View style={s.propDetails}>
-                    <Text style={s.propName}>--</Text>
-                    <Text style={s.propAddr}>No property assigned yet</Text>
-                    <View style={s.propTagRow}>
-                      <View style={[s.propTag, { backgroundColor: TEAL_BG }]}>
-                        <Text style={[s.propTagTxt, { color: TEAL }]}>No Lease</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <Text style={sh.title}>My Property</Text>
+                  <TouchableOpacity onPress={fetchLease} activeOpacity={0.7}>
+                    <Text style={{ fontSize: 11, color: ACCENT_LIGHT, fontWeight: "600" }}>↻ Refresh</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {leaseLoading ? (
+                  <View style={s.emptyState}><ActivityIndicator color={ACCENT_LIGHT} /></View>
+                ) : leaseError !== "" ? (
+                  <View style={s.emptyState}><Text style={[s.emptyTxt, { color: DANGER }]}>{leaseError}</Text></View>
+                ) : !lease ? (
+                  <>
+                    <View style={s.propRow}>
+                      <View style={s.propIconBox}><Text style={{ fontSize: 28 }}>🏢</Text></View>
+                      <View style={s.propDetails}>
+                        <Text style={s.propName}>No property assigned</Text>
+                        <Text style={s.propAddr}>Contact your landlord to get allocated</Text>
+                        <View style={s.propTagRow}>
+                          <View style={[s.propTag, { backgroundColor: TEAL_BG }]}>
+                            <Text style={[s.propTagTxt, { color: TEAL }]}>No Lease</Text>
+                          </View>
+                        </View>
                       </View>
                     </View>
-                  </View>
-                </View>
-                <View style={s.leaseRow}>
-                  <View style={s.leaseStat}>
-                    <Text style={s.leaseVal}>--</Text>
-                    <Text style={s.leaseLbl}>Start Date</Text>
-                  </View>
-                  <View style={s.leaseDiv} />
-                  <View style={s.leaseStat}>
-                    <Text style={[s.leaseVal, { color: WARNING }]}>--</Text>
-                    <Text style={s.leaseLbl}>End Date</Text>
-                  </View>
-                  <View style={s.leaseDiv} />
-                  <View style={s.leaseStat}>
-                    <Text style={[s.leaseVal, { color: TEAL }]}>--</Text>
-                    <Text style={s.leaseLbl}>Monthly</Text>
-                  </View>
-                </View>
+                    <View style={s.leaseRow}>
+                      {["Start Date", "End Date", "Monthly"].map((lbl, i) => (
+                        <View key={lbl} style={{ flex: 1, alignItems: "center" }}>
+                          {i > 0 && <View style={[s.leaseDiv, { position: "absolute", left: 0, top: 0, bottom: 0 }]} />}
+                          <Text style={s.leaseVal}>--</Text>
+                          <Text style={s.leaseLbl}>{lbl}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    {/* Property details block */}
+                    <View style={s.propRow}>
+                      <View style={s.propIconBox}>
+                        <Text style={{ fontSize: 28 }}>
+                          {lease.property?.propertyType === "HOUSE" ? "🏠" : lease.property?.propertyType === "STUDIO" ? "🛋️" : "🏢"}
+                        </Text>
+                      </View>
+                      <View style={s.propDetails}>
+                        <Text style={s.propName}>{lease.property?.name ?? "—"}</Text>
+                        <Text style={s.propAddr}>
+                          {lease.property?.addressLine1 ?? ""}{lease.property?.city ? `, ${lease.property.city}` : ""}
+                          {lease.property?.postcode ? ` ${lease.property.postcode}` : ""}
+                        </Text>
+                        {lease.property?.roomNumber ? (
+                          <Text style={[s.propAddr, { color: ACCENT_LIGHT }]}>Room: {lease.property.roomNumber}</Text>
+                        ) : null}
+                        <View style={s.propTagRow}>
+                          <View style={[s.propTag, { backgroundColor: SUCCESS_BG }]}>
+                            <Text style={[s.propTagTxt, { color: SUCCESS }]}>Active Lease</Text>
+                          </View>
+                          {lease.property?.propertyType ? (
+                            <View style={[s.propTag, { backgroundColor: "rgba(74,144,217,0.12)" }]}>
+                              <Text style={[s.propTagTxt, { color: ACCENT_LIGHT }]}>{lease.property.propertyType}</Text>
+                            </View>
+                          ) : null}
+                          {lease.property?.bedrooms ? (
+                            <View style={[s.propTag, { backgroundColor: "rgba(74,144,217,0.08)" }]}>
+                              <Text style={[s.propTagTxt, { color: ACCENT_LIGHT }]}>{lease.property.bedrooms} BHK</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                    </View>
+                    {/* Furnishing / amenities */}
+                    {lease.property?.furnishing ? (
+                      <Text style={[s.propAddr, { marginBottom: 8 }]}>
+                        {lease.property.furnishing.replace("_", " ")}
+                        {lease.property.amenities && lease.property.amenities.length > 0
+                          ? " · " + lease.property.amenities.slice(0, 3).join(", ")
+                          : ""}
+                      </Text>
+                    ) : null}
+                    {/* Lease stats row */}
+                    <View style={s.leaseRow}>
+                      <View style={s.leaseStat}>
+                        <Text style={s.leaseVal}>
+                          {lease.leaseStart ? new Date(lease.leaseStart).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "--"}
+                        </Text>
+                        <Text style={s.leaseLbl}>Start Date</Text>
+                      </View>
+                      <View style={s.leaseDiv} />
+                      <View style={s.leaseStat}>
+                        <Text style={[s.leaseVal, { color: WARNING }]}>
+                          {lease.leaseEnd ? new Date(lease.leaseEnd).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "--"}
+                        </Text>
+                        <Text style={s.leaseLbl}>End Date</Text>
+                      </View>
+                      <View style={s.leaseDiv} />
+                      <View style={s.leaseStat}>
+                        <Text style={[s.leaseVal, { color: TEAL }]}>
+                          {lease.monthlyRent ? `₹${lease.monthlyRent.toLocaleString("en-IN")}` : "--"}
+                        </Text>
+                        <Text style={s.leaseLbl}>Monthly Rent</Text>
+                      </View>
+                    </View>
+                  </>
+                )}
               </View>
             </FadeIn>
 
@@ -627,7 +775,7 @@ export default function RenterDashboard() {
 
         {/* Sign out */}
         <FadeIn delay={480}>
-          <TouchableOpacity style={s.signOut} onPress={() => router.replace("/login")} activeOpacity={0.75}>
+          <TouchableOpacity style={s.signOut} onPress={handleSignOut} activeOpacity={0.75}>
             <Text style={s.signOutTxt}>Sign Out</Text>
           </TouchableOpacity>
         </FadeIn>

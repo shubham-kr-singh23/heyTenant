@@ -28,7 +28,7 @@ import { useRouter } from "expo-router";
 // no isLoaded or setActive — designed for Clerk's prebuilt components only.
 // useSSO and useAuth stay on the main path; they are separate hooks.
 import { useSignIn } from "@clerk/expo/legacy";
-import { useSSO, useAuth } from "@clerk/expo";
+import { useSSO, useAuth, useClerk } from "@clerk/expo";
 import { API_URL } from "../constants/api";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
@@ -91,6 +91,7 @@ export default function LoginScreen() {
   const { startSSOFlow } = useSSO();
   const { isSignedIn, getToken } = useAuth();
   const { signIn, setActive, isLoaded } = useSignIn();
+  const { signOut } = useClerk();
 
   // -- Entry animations
   const pageOpacity    = useSharedValue(0);
@@ -154,18 +155,41 @@ export default function LoginScreen() {
       });
       if (result.status === "complete") {
         await setActive!({ session: result.createdSessionId });
-        // Verify the user record exists in MongoDB (non-blocking — failure is logged, not surfaced).
+
+        // ── Role validation ────────────────────────────────────────────────────
+        // After Clerk activates the session, call our backend /api/auth/login
+        // which checks that this Clerk account belongs to the selected role.
+        // If the account exists in the wrong collection (e.g. a renter trying
+        // to log in as a landlord) the backend returns 403 and we block access.
         try {
           const token = await getToken();
           if (token) {
-            const r = await fetch(`${API_URL}/api/auth/me`, {
-              headers: { Authorization: `Bearer ${token}` },
+            const r = await fetch(`${API_URL}/api/auth/login`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                role: role.toUpperCase(),
+              }),
             });
-            if (!r.ok) console.warn("[login] /api/auth/me returned", r.status);
+            if (!r.ok) {
+              // Role mismatch or account not found — sign out Clerk session
+              await signOut();
+              const body = await r.json().catch(() => null);
+              const msg = body?.error?.message ?? (role === "landlord"
+                ? "This account is not registered as a Landlord."
+                : "This account is not registered as a Renter.");
+              setLoginError(msg);
+              return;
+            }
           }
         } catch (e) {
-          console.warn("[login] /api/auth/me check failed:", e);
+          console.warn("[login] role-check failed:", e);
+          // Network failure — still allow navigation rather than hard-blocking
         }
+
         router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
       } else {
         setLoginError("Sign-in incomplete. Please try again.");
@@ -180,7 +204,7 @@ export default function LoginScreen() {
     } finally {
       setLoginLoading(false);
     }
-  }, [isLoaded, email, password, role, signIn, setActive, router]);
+  }, [isLoaded, email, password, role, signIn, setActive, signOut, router]);
   const handleBack = () => router.back();
 
   // -- Google Sign-In via Clerk SSO

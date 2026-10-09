@@ -141,7 +141,7 @@ export default function LeaseInfo() {
               { icon: "🛠️", title: "Alterations",   body: "No structural alterations. Minor redecoration requires approval.",     ok: false },
               { icon: "🏠", title: "Sub-letting",    body: "Subletting or Airbnb use strictly prohibited.",                       ok: false },
               { icon: "🌱", title: "Garden",         body: "Tenant responsible for maintaining the rear garden to a tidy standard.",ok: true  },
-              { icon: "🔧", title: "Minor Repairs",  body: "Tenant responsible for minor repairs under £50 (e.g. bulbs, fuses).", ok: true  },
+              { icon: "🔧", title: "Minor Repairs",  body: "Tenant responsible for minor repairs under ₹2,000 (e.g. bulbs, fuses).", ok: true  },
             ].map((c, i) => (
               <View key={c.title} style={[s.clauseRow, i > 0 && s.bt]}>
                 <Text style={{ fontSize: 18, flexShrink: 0 }}>{c.icon}</Text>

@@ -6,13 +6,14 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
 const ACCENT       = "#3B6FA8";
 const ACCENT_LIGHT = "#4A90D9";
 const SUCCESS      = "#22C55E";
-const SUCCESS_BG   = "rgba(34,197,94,0.12)";
 const WARNING      = "#F59E0B";
 const DANGER       = "#F87171";
 const WHITE        = "#FFFFFF";
@@ -76,6 +77,7 @@ const ch = StyleSheet.create({
 export default function AddProperty() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { getToken } = useAuth();
   const paddingTop = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
   const [propertyType, setPropertyType] = useState("Apartment");
@@ -86,12 +88,14 @@ export default function AddProperty() {
   const [post,  setPost]  = useState("");
   const [beds,  setBeds]  = useState("");
   const [baths, setBaths] = useState("");
+  const [roomNum, setRoomNum] = useState("");
   const [rent,  setRent]  = useState("");
   const [deposit, setDeposit] = useState("");
   const [desc,  setDesc]  = useState("");
   const [amenities, setAmenities] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const AMENITIES = ["Parking", "Garden", "EV Charger", "Gym", "Concierge", "Bike Storage", "Pet Friendly", "Bills Included"];
   const toggleAmenity = (a: string) =>
@@ -109,18 +113,19 @@ export default function AddProperty() {
     return Object.keys(e).length === 0;
   };
 
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
   const handleSubmit = async () => {
     if (!validate()) return;
     setSubmitted(true);
     setSubmitError(null);
     try {
-      const { api, TokenStore } = await import("../../constants/api");
-      const token = await TokenStore.getAccess();
-      if (!token) { router.replace("/login"); return; }
+      // Use Clerk's getToken() — this returns the valid JWT the backend verifies
+      const token = await getToken();
+      if (!token) {
+        setSubmitError("Not authenticated. Please sign in again.");
+        setSubmitted(false);
+        return;
+      }
 
-      // Map UI labels to schema enums
       const typeMap: Record<string, string> = {
         "Apartment": "APARTMENT", "House": "HOUSE", "Studio": "STUDIO",
         "Commercial": "COMMERCIAL", "HMO": "HMO",
@@ -129,25 +134,37 @@ export default function AddProperty() {
         "Furnished": "FURNISHED", "Part-Furnished": "PART_FURNISHED", "Unfurnished": "UNFURNISHED",
       };
 
-      const res = await api.post("/api/landlord/properties", {
-        name:         name.trim(),
-        addressLine1: addr.trim(),
-        city:         city.trim(),
-        postcode:     post.trim(),
-        propertyType: typeMap[propertyType] ?? "APARTMENT",
-        furnishing:   furnMap[furnishing]   ?? "FURNISHED",
-        bedrooms:     parseInt(beds, 10) || 0,
-        bathrooms:    baths ? parseInt(baths, 10) : undefined,
-        monthlyRent:  parseFloat(rent.replace(/,/g, "")) || 0,
-        depositAmount: deposit ? parseFloat(deposit.replace(/,/g, "")) : undefined,
-        description:  desc.trim() || undefined,
-        amenities:    amenities.length > 0 ? amenities : undefined,
+      const res = await fetch(`${API_URL}/api/landlord/properties`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name:          name.trim(),
+          addressLine1:  addr.trim(),
+          city:          city.trim(),
+          postcode:      post.trim(),
+          propertyType:  typeMap[propertyType] ?? "APARTMENT",
+          furnishing:    furnMap[furnishing]   ?? "FURNISHED",
+          bedrooms:      parseInt(beds, 10) || 0,
+          bathrooms:     baths ? parseInt(baths, 10) : undefined,
+          roomNumber:    propertyType === "House" && roomNum.trim() ? roomNum.trim() : undefined,
+          monthlyRent:   parseFloat(rent.replace(/,/g, "")) || 0,
+          depositAmount: deposit ? parseFloat(deposit.replace(/,/g, "")) : undefined,
+          description:   desc.trim() || undefined,
+          amenities:     amenities.length > 0 ? amenities : undefined,
+        }),
       });
-      if (!res.success) {
-        setSubmitError(res.error?.message ?? "Failed to add property.");
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        setSubmitError(json?.error?.message ?? `Failed to add property (${res.status}).`);
         setSubmitted(false);
         return;
       }
+
+      // Success — go back to dashboard
       router.back();
     } catch {
       setSubmitError("Network error — is the server running?");
@@ -209,11 +226,11 @@ export default function AddProperty() {
           <FadeIn delay={120}>
             <View style={s.card}>
               <Text style={s.cardTitle}>Property Details</Text>
-              <Field label="Property Name / Reference" placeholder="e.g. Oak Street Flat 4B" value={name} onChangeText={setName} error={errors.name} />
-              <Field label="Street Address" placeholder="12 Oak Street" value={addr} onChangeText={setAddr} error={errors.addr} />
+              <Field label="Property Name / Reference" placeholder="e.g. MG Road Flat 4B" value={name} onChangeText={setName} error={errors.name} />
+              <Field label="Street Address" placeholder="12 MG Road" value={addr} onChangeText={setAddr} error={errors.addr} />
               <View style={s.twoCol}>
-                <View style={{ flex: 1 }}><Field label="City / Town" placeholder="London" value={city} onChangeText={setCity} error={errors.city} /></View>
-                <View style={{ flex: 1 }}><Field label="Postcode" placeholder="E1 5TW" value={post} onChangeText={setPost} error={errors.post} /></View>
+                <View style={{ flex: 1 }}><Field label="City / Town" placeholder="Mumbai" value={city} onChangeText={setCity} error={errors.city} /></View>
+                <View style={{ flex: 1 }}><Field label="PIN Code" placeholder="400001" value={post} onChangeText={setPost} error={errors.post} /></View>
               </View>
             </View>
           </FadeIn>
@@ -226,6 +243,14 @@ export default function AddProperty() {
                 <View style={{ flex: 1 }}><Field label="Bedrooms" placeholder="2" value={beds} onChangeText={setBeds} keyboardType="numeric" error={errors.beds} /></View>
                 <View style={{ flex: 1 }}><Field label="Bathrooms" placeholder="1" value={baths} onChangeText={setBaths} keyboardType="numeric" /></View>
               </View>
+              {propertyType === "House" && (
+                <Field
+                  label="Room Number / Identifier"
+                  placeholder="e.g. Room 3, First Floor"
+                  value={roomNum}
+                  onChangeText={setRoomNum}
+                />
+              )}
               <Text style={[f.label, { marginBottom: 8, marginTop: 4 }]}>Furnishing</Text>
               <View style={s.chipRow}>
                 {FURNISHING.map((t) => (
@@ -240,13 +265,13 @@ export default function AddProperty() {
             <View style={s.card}>
               <Text style={s.cardTitle}>Pricing</Text>
               <View style={s.twoCol}>
-                <View style={{ flex: 1 }}><Field label="Monthly Rent (£)" placeholder="1,250" value={rent} onChangeText={setRent} keyboardType="numeric" error={errors.rent} /></View>
-                <View style={{ flex: 1 }}><Field label="Deposit (£)" placeholder="2,500" value={deposit} onChangeText={setDeposit} keyboardType="numeric" /></View>
+                <View style={{ flex: 1 }}><Field label="Monthly Rent (₹)" placeholder="25,000" value={rent} onChangeText={setRent} keyboardType="numeric" error={errors.rent} /></View>
+                <View style={{ flex: 1 }}><Field label="Deposit (₹)" placeholder="50,000" value={deposit} onChangeText={setDeposit} keyboardType="numeric" /></View>
               </View>
               {rent.length > 0 && !isNaN(parseFloat(rent.replace(/,/g, ""))) && (
                 <View style={s.infoBanner}>
                   <Text style={s.infoBannerTxt}>
-                    💡 Suggested deposit: £{(parseFloat(rent.replace(/,/g, "")) * 2).toLocaleString()} (2 months)
+                    💡 Suggested deposit: ₹{(parseFloat(rent.replace(/,/g, "")) * 2).toLocaleString("en-IN")} (2 months)
                   </Text>
                 </View>
               )}

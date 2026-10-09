@@ -97,7 +97,7 @@ export default function NewInvoice() {
   useEffect(() => {
     if (invoiceType === "rent" && selectedTenant) {
       const tenant = TENANTS.find(t => t.id === selectedTenant);
-      setAmount(tenant?.rent.replace("£", "") ?? "");
+      setAmount(tenant?.rent.replace("₹", "") ?? "");
     }
   }, [invoiceType, selectedTenant]);
 
@@ -234,7 +234,7 @@ export default function NewInvoice() {
                   </View>
                   <Field label="Invoice Number" placeholder="INV-0043" value={invoiceNum} onChangeText={setInvoiceNum} />
                   <View style={s.twoCol}>
-                    <View style={{ flex: 1 }}><Field label="Amount (£)" placeholder="1,250" value={amount} onChangeText={setAmount} keyboardType="numeric" /></View>
+                    <View style={{ flex: 1 }}><Field label="Amount (₹)" placeholder="1,250" value={amount} onChangeText={setAmount} keyboardType="numeric" /></View>
                     <View style={{ flex: 1 }}><Field label="Due Date" placeholder="01/01/2025" value={dueDate} onChangeText={setDueDate} /></View>
                   </View>
                   <Field label="Notes" placeholder="Optional invoice note…" value={notes} onChangeText={setNotes} multiline />
@@ -264,7 +264,7 @@ export default function NewInvoice() {
                     </View>
                     <View style={s.previewRow}>
                       <Text style={s.previewLbl}>Amount</Text>
-                      <Text style={[s.previewVal, { color: SUCCESS, fontSize: 16, fontWeight: "800" }]}>£{amount}</Text>
+                      <Text style={[s.previewVal, { color: SUCCESS, fontSize: 16, fontWeight: "800" }]}>₹{amount}</Text>
                     </View>
                     <View style={s.previewRow}>
                       <Text style={s.previewLbl}>Due Date</Text>

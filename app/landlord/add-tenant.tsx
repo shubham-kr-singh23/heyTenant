@@ -25,10 +25,10 @@ const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
 const AVAILABLE_UNITS = [
-  { id: "1", label: "Oak Street — Flat 4B",  rent: "£1,250/mo" },
-  { id: "2", label: "Maple Ave — Unit 3A",   rent: "£1,100/mo" },
-  { id: "3", label: "Birch St — Studio 1A",  rent: "£850/mo"   },
-  { id: "4", label: "Cedar Lane — Flat 6C",  rent: "£1,400/mo" },
+  { id: "1", label: "MG Road — Flat 4B",       rent: "₹25,000/mo" },
+  { id: "2", label: "Linking Rd — Unit 3A",     rent: "₹22,000/mo" },
+  { id: "3", label: "Brigade Rd — Studio 1A",   rent: "₹18,500/mo" },
+  { id: "4", label: "Koramangala — Flat 6C",    rent: "₹28,000/mo" },
 ];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
