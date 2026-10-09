@@ -415,15 +415,14 @@ export default function LoginScreen() {
           </Animated.View>
 
           {/* Divider */}
-          <View style={styles.dividerRow}>
+          {/* <View style={styles.dividerRow}>
             <View style={styles.dividerLine} />
             <Text style={styles.dividerLabel}>or continue with</Text>
             <View style={styles.dividerLine} />
-          </View>
+          </View> */}
 
           {/* Social */}
-          <View style={styles.socialRow}>
-            {/* Google -- wired to Clerk SSO */}
+          {/* <View style={styles.socialRow}>
             <TouchableOpacity
               style={styles.socialBtn}
               activeOpacity={0.75}
@@ -437,7 +436,6 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Apple and SSO -- placeholder */}
             {[
               { id: "apple", label: "Apple" },
               { id: "sso",   label: "SSO"   },
@@ -446,7 +444,7 @@ export default function LoginScreen() {
                 <Text style={styles.socialText}>{label}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </View> */}
         </Animated.View>
 
         {/* -- Footer */}

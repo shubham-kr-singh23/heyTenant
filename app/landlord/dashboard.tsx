@@ -24,37 +24,37 @@ import { useUser, useAuth, useClerk } from "@clerk/expo";
 import { API_URL } from "../../constants/api";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
-const BRAND_BLUE   = "#1A3C5E";
-const BRAND_DEEP   = "#122B44";
-const ACCENT       = "#3B6FA8";
+const BRAND_BLUE = "#1A3C5E";
+const BRAND_DEEP = "#122B44";
+const ACCENT = "#3B6FA8";
 const ACCENT_LIGHT = "#4A90D9";
-const SUCCESS      = "#22C55E";
-const SUCCESS_BG   = "rgba(34,197,94,0.12)";
-const WARNING      = "#F59E0B";
-const WARNING_BG   = "rgba(245,158,11,0.12)";
-const DANGER       = "#F87171";
-const DANGER_BG    = "rgba(248,113,113,0.12)";
-const PURPLE       = "#8B5CF6";
-const WHITE        = "#FFFFFF";
-const WHITE_90     = "rgba(255,255,255,0.90)";
-const WHITE_72     = "rgba(255,255,255,0.72)";
-const WHITE_40     = "rgba(255,255,255,0.40)";
-const WHITE_20     = "rgba(255,255,255,0.20)";
-const WHITE_15     = "rgba(255,255,255,0.15)";
-const WHITE_08     = "rgba(255,255,255,0.08)";
-const WHITE_05     = "rgba(255,255,255,0.05)";
+const SUCCESS = "#22C55E";
+const SUCCESS_BG = "rgba(34,197,94,0.12)";
+const WARNING = "#F59E0B";
+const WARNING_BG = "rgba(245,158,11,0.12)";
+const DANGER = "#F87171";
+const DANGER_BG = "rgba(248,113,113,0.12)";
+const PURPLE = "#8B5CF6";
+const WHITE = "#FFFFFF";
+const WHITE_90 = "rgba(255,255,255,0.90)";
+const WHITE_72 = "rgba(255,255,255,0.72)";
+const WHITE_40 = "rgba(255,255,255,0.40)";
+const WHITE_20 = "rgba(255,255,255,0.20)";
+const WHITE_15 = "rgba(255,255,255,0.15)";
+const WHITE_08 = "rgba(255,255,255,0.08)";
+const WHITE_05 = "rgba(255,255,255,0.05)";
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 const QUICK_STATS = [
-  { label: "Properties",  value: "--", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
-  { label: "Tenants",     value: "--", icon: "\uD83D\uDC65", color: SUCCESS,       bg: SUCCESS_BG             },
-  { label: "Maintenance", value: "--", icon: "\uD83D\uDD27", color: WARNING,       bg: WARNING_BG             },
-  { label: "Vacancies",   value: "--", icon: "\uD83D\uDEAA", color: DANGER,        bg: DANGER_BG              },
+  { label: "Properties", value: "--", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Tenants", value: "--", icon: "\uD83D\uDC65", color: SUCCESS, bg: SUCCESS_BG },
+  { label: "Maintenance", value: "--", icon: "\uD83D\uDD27", color: WARNING, bg: WARNING_BG },
+  { label: "Vacancies", value: "--", icon: "\uD83D\uDEAA", color: DANGER, bg: DANGER_BG },
 ];
 
 const RECENT_ACTIVITIES: { id: string; icon: string; title: string; desc: string; time: string; color: string }[] = [];
 const MAINTENANCE_ITEMS: { id: string; unit: string; issue: string; priority: string; status: string; days: number }[] = [];
-const UPCOMING_EVENTS:   { id: string; title: string; date: string; color: string }[] = [];
+const UPCOMING_EVENTS: { id: string; title: string; date: string; color: string }[] = [];
 
 const OCCUPANCY_DATA = [
   { month: "Jul", rate: 0 },
@@ -65,26 +65,26 @@ const OCCUPANCY_DATA = [
   { month: "Dec", rate: 0 },
 ];
 
-const REVENUE_DATA   = [0, 0, 0, 0, 0, 0];
+const REVENUE_DATA = [0, 0, 0, 0, 0, 0];
 const REVENUE_MONTHS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function priorityColor(p: string) {
-  if (p === "High")   return DANGER;
+  if (p === "High") return DANGER;
   if (p === "Medium") return WARNING;
   return SUCCESS;
 }
 function statusColor(s: string) {
-  if (s === "Open")        return DANGER;
+  if (s === "Open") return DANGER;
   if (s === "In Progress") return WARNING;
   return ACCENT_LIGHT;
 }
 
 // ─── FadeIn wrapper ───────────────────────────────────────────────────────────
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
-  const opacity    = useSharedValue(0);
+  const opacity = useSharedValue(0);
   const translateY = useSharedValue(16);
   useEffect(() => {
-    opacity.value    = withDelay(delay, withTiming(1, { duration: 450 }));
+    opacity.value = withDelay(delay, withTiming(1, { duration: 450 }));
     translateY.value = withDelay(delay, withTiming(0, { duration: 450, easing: Easing.out(Easing.cubic) }));
   }, []);
   const style = useAnimatedStyle(() => ({
@@ -103,8 +103,8 @@ function SectionHeader({ title, action }: { title: string; action?: string }) {
   );
 }
 const sh = StyleSheet.create({
-  row:    { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  title:  { fontSize: 15, fontWeight: "700", color: WHITE, letterSpacing: 0.2 },
+  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  title: { fontSize: 15, fontWeight: "700", color: WHITE, letterSpacing: 0.2 },
   action: { fontSize: 12, fontWeight: "600", color: ACCENT_LIGHT },
 });
 
@@ -124,7 +124,7 @@ function OccupancyChart() {
   const bs2 = useAnimatedStyle(() => ({ height: a2.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
   const bs3 = useAnimatedStyle(() => ({ height: a3.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
   const bs4 = useAnimatedStyle(() => ({ height: a4.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs5 = useAnimatedStyle(() => ({ height: a5.value * maxH, backgroundColor: WHITE_40,     borderRadius: 5, flex: 1 }));
+  const bs5 = useAnimatedStyle(() => ({ height: a5.value * maxH, backgroundColor: WHITE_40, borderRadius: 5, flex: 1 }));
   const barStyles = [bs0, bs1, bs2, bs3, bs4, bs5];
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, height: maxH + 32 }}>
@@ -142,12 +142,12 @@ function OccupancyChart() {
 // ─── Revenue sparkline ────────────────────────────────────────────────────────
 function RevenueSparkline() {
   const { width } = useWindowDimensions();
-  const cardW  = (width - 32 - 12) / 2 - 32;
+  const cardW = (width - 32 - 12) / 2 - 32;
   const chartH = 56;
   const minVal = Math.min(...REVENUE_DATA);
   const maxVal = Math.max(...REVENUE_DATA);
-  const range  = maxVal - minVal || 1;
-  const pts    = REVENUE_DATA.map((v, i) => ({
+  const range = maxVal - minVal || 1;
+  const pts = REVENUE_DATA.map((v, i) => ({
     x: (i / (REVENUE_DATA.length - 1)) * cardW,
     y: chartH - ((v - minVal) / range) * (chartH - 10) - 5,
   }));
@@ -155,8 +155,10 @@ function RevenueSparkline() {
     <View style={{ marginTop: 10 }}>
       <View style={{ height: chartH, position: "relative" }}>
         {[0.33, 0.66, 1].map((f) => (
-          <View key={f} style={{ position: "absolute", left: 0, right: 0,
-            top: chartH - f * (chartH - 10) - 5, height: 1, backgroundColor: WHITE_08 }} />
+          <View key={f} style={{
+            position: "absolute", left: 0, right: 0,
+            top: chartH - f * (chartH - 10) - 5, height: 1, backgroundColor: WHITE_08
+          }} />
         ))}
         {pts.slice(0, -1).map((p, i) => {
           const nx = pts[i + 1].x; const ny = pts[i + 1].y;
@@ -164,16 +166,20 @@ function RevenueSparkline() {
           const len = Math.sqrt(dx * dx + dy * dy);
           const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
           return (
-            <View key={i} style={{ position: "absolute", left: p.x, top: p.y - 1, width: len,
+            <View key={i} style={{
+              position: "absolute", left: p.x, top: p.y - 1, width: len,
               height: 2, backgroundColor: ACCENT_LIGHT, borderRadius: 1,
-              transform: [{ rotate: `${ang}deg` }], transformOrigin: "0 50%" }} />
+              transform: [{ rotate: `${ang}deg` }], transformOrigin: "0 50%"
+            }} />
           );
         })}
         {pts.map((p, i) => (
-          <View key={i} style={{ position: "absolute", left: p.x - 4, top: p.y - 4,
+          <View key={i} style={{
+            position: "absolute", left: p.x - 4, top: p.y - 4,
             width: 8, height: 8, borderRadius: 4,
             backgroundColor: i === pts.length - 1 ? ACCENT_LIGHT : WHITE_20,
-            borderWidth: i === pts.length - 1 ? 2 : 0, borderColor: WHITE }} />
+            borderWidth: i === pts.length - 1 ? 2 : 0, borderColor: WHITE
+          }} />
         ))}
       </View>
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
@@ -196,20 +202,20 @@ function DonutSummary() {
       </View>
       <View style={dn.legend}>
         <View style={dn.item}><View style={[dn.dot, { backgroundColor: ACCENT_LIGHT }]} /><Text style={dn.txt}>9 Occupied</Text></View>
-        <View style={dn.item}><View style={[dn.dot, { backgroundColor: DANGER      }]} /><Text style={dn.txt}>3 Vacant</Text></View>
+        <View style={dn.item}><View style={[dn.dot, { backgroundColor: DANGER }]} /><Text style={dn.txt}>3 Vacant</Text></View>
       </View>
     </View>
   );
 }
 const dn = StyleSheet.create({
-  ring:   { width: 96, height: 96, borderRadius: 48, borderWidth: 10, alignItems: "center", justifyContent: "center" },
-  inner:  { width: 74, height: 74, borderRadius: 37, borderWidth: 10, alignItems: "center", justifyContent: "center" },
-  pct:    { fontSize: 17, fontWeight: "800", color: WHITE, lineHeight: 21 },
-  sub:    { fontSize: 8, color: WHITE_40, letterSpacing: 0.5, textTransform: "uppercase" },
+  ring: { width: 96, height: 96, borderRadius: 48, borderWidth: 10, alignItems: "center", justifyContent: "center" },
+  inner: { width: 74, height: 74, borderRadius: 37, borderWidth: 10, alignItems: "center", justifyContent: "center" },
+  pct: { fontSize: 17, fontWeight: "800", color: WHITE, lineHeight: 21 },
+  sub: { fontSize: 8, color: WHITE_40, letterSpacing: 0.5, textTransform: "uppercase" },
   legend: { marginTop: 10, gap: 6 },
-  item:   { flexDirection: "row", alignItems: "center", gap: 6 },
-  dot:    { width: 8, height: 8, borderRadius: 4 },
-  txt:    { fontSize: 11, color: WHITE_72 },
+  item: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  txt: { fontSize: 11, color: WHITE_72 },
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -228,20 +234,20 @@ function getGreeting(): string {
 
 // ─── Inline Mini Calendar ─────────────────────────────────────────────────────
 const DAYS_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-const MONTHS     = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function MiniCalendar({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const today     = new Date();
-  const parsed    = value ? new Date(value + "T00:00:00") : null;
-  const initYear  = parsed?.getFullYear()  ?? today.getFullYear();
-  const initMonth = parsed?.getMonth()     ?? today.getMonth();
+  const today = new Date();
+  const parsed = value ? new Date(value + "T00:00:00") : null;
+  const initYear = parsed?.getFullYear() ?? today.getFullYear();
+  const initMonth = parsed?.getMonth() ?? today.getMonth();
 
-  const [year,  setYear]  = useState(initYear);
+  const [year, setYear] = useState(initYear);
   const [month, setMonth] = useState(initMonth);
-  const [open,  setOpen]  = useState(false);
+  const [open, setOpen] = useState(false);
 
-  const firstDay   = new Date(year, month, 1).getDay();
-  const daysInMon  = new Date(year, month + 1, 0).getDate();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMon = new Date(year, month + 1, 0).getDate();
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
@@ -258,17 +264,17 @@ function MiniCalendar({ label, value, onChange }: { label: string; value: string
     setOpen(false);
   };
 
-  const selDay   = parsed && parsed.getFullYear() === year && parsed.getMonth() === month ? parsed.getDate() : null;
+  const selDay = parsed && parsed.getFullYear() === year && parsed.getMonth() === month ? parsed.getDate() : null;
   const todayDay = today.getFullYear() === year && today.getMonth() === month ? today.getDate() : null;
 
-  const WHITE    = "#FFFFFF";
+  const WHITE = "#FFFFFF";
   const WHITE_40 = "rgba(255,255,255,0.40)";
   const WHITE_15 = "rgba(255,255,255,0.15)";
   const WHITE_08 = "rgba(255,255,255,0.08)";
   const WHITE_05 = "rgba(255,255,255,0.05)";
-  const ACCENT   = "#3B6FA8";
+  const ACCENT = "#3B6FA8";
   const ACCENT_LIGHT = "#4A90D9";
-  const SUCCESS  = "#22C55E";
+  const SUCCESS = "#22C55E";
 
   return (
     <View style={{ marginBottom: 14 }}>
@@ -308,19 +314,23 @@ function MiniCalendar({ label, value, onChange }: { label: string; value: string
           {Array.from({ length: cells.length / 7 }).map((_, row) => (
             <View key={row} style={{ flexDirection: "row", marginBottom: 2 }}>
               {cells.slice(row * 7, row * 7 + 7).map((day, col) => {
-                const isSel   = day !== null && day === selDay;
+                const isSel = day !== null && day === selDay;
                 const isToday = day !== null && day === todayDay;
                 return (
                   <TouchableOpacity
                     key={col}
-                    style={{ flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8,
-                      backgroundColor: isSel ? ACCENT_LIGHT : isToday ? "rgba(74,144,217,0.15)" : "transparent" }}
+                    style={{
+                      flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8,
+                      backgroundColor: isSel ? ACCENT_LIGHT : isToday ? "rgba(74,144,217,0.15)" : "transparent"
+                    }}
                     onPress={() => day !== null && select(day)}
                     activeOpacity={day !== null ? 0.7 : 1}
                     disabled={day === null}
                   >
-                    <Text style={{ fontSize: 12, fontWeight: isSel ? "800" : "400",
-                      color: isSel ? WHITE : isToday ? ACCENT_LIGHT : day !== null ? "rgba(255,255,255,0.85)" : "transparent" }}>
+                    <Text style={{
+                      fontSize: 12, fontWeight: isSel ? "800" : "400",
+                      color: isSel ? WHITE : isToday ? ACCENT_LIGHT : day !== null ? "rgba(255,255,255,0.85)" : "transparent"
+                    }}>
                       {day ?? ""}
                     </Text>
                   </TouchableOpacity>
@@ -363,6 +373,7 @@ type PropertyRecord = {
   status: "VACANT" | "OCCUPIED";
   amenities?: string[];
   description?: string;
+  roomNumber?: number;
 };
 
 type RenterRecord = {
@@ -373,8 +384,8 @@ type RenterRecord = {
 };
 
 export default function LandlordDashboard() {
-  const router  = useRouter();
-  const insets  = useSafeAreaInsets();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useUser();
   const { getToken } = useAuth();
   const { signOut } = useClerk();
@@ -385,9 +396,9 @@ export default function LandlordDashboard() {
   const [activeTab, setActiveTab] = useState<"overview" | "properties" | "tenants" | "finance">("overview");
 
   // ── Tenants state ──────────────────────────────────────────────────────────
-  const [tenants, setTenants]           = useState<TenantRecord[]>([]);
+  const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
-  const [tenantsError, setTenantsError]   = useState("");
+  const [tenantsError, setTenantsError] = useState("");
 
   const fetchTenants = useCallback(async () => {
     setTenantsLoading(true);
@@ -424,9 +435,9 @@ export default function LandlordDashboard() {
   }, [activeTab]);
 
   // ── Properties state ───────────────────────────────────────────────────────
-  const [properties,        setProperties]        = useState<PropertyRecord[]>([]);
-  const [propsLoading,      setPropsLoading]       = useState(false);
-  const [propsError,        setPropsError]         = useState("");
+  const [properties, setProperties] = useState<PropertyRecord[]>([]);
+  const [propsLoading, setPropsLoading] = useState(false);
+  const [propsError, setPropsError] = useState("");
 
   const fetchProperties = useCallback(async () => {
     setPropsLoading(true);
@@ -456,12 +467,12 @@ export default function LandlordDashboard() {
   }, [activeTab]);
 
   // ── Allocate modal state ───────────────────────────────────────────────────
-  const [allocateTarget,    setAllocateTarget]     = useState<PropertyRecord | null>(null);
-  const [allocRenterId,     setAllocRenterId]       = useState("");
-  const [allocLeaseStart,   setAllocLeaseStart]     = useState("");
-  const [allocLeaseEnd,     setAllocLeaseEnd]       = useState("");
-  const [allocSubmitting,   setAllocSubmitting]     = useState(false);
-  const [allocError,        setAllocError]          = useState("");
+  const [allocateTarget, setAllocateTarget] = useState<PropertyRecord | null>(null);
+  const [allocRenterId, setAllocRenterId] = useState("");
+  const [allocLeaseStart, setAllocLeaseStart] = useState("");
+  const [allocLeaseEnd, setAllocLeaseEnd] = useState("");
+  const [allocSubmitting, setAllocSubmitting] = useState(false);
+  const [allocError, setAllocError] = useState("");
 
   // Build unique renter list for the allocate picker from all tenants data
   const renterPickerList: RenterRecord[] = tenants
@@ -484,9 +495,9 @@ export default function LandlordDashboard() {
 
   const handleAllocate = async () => {
     if (!allocateTarget) return;
-    if (!allocRenterId)   { setAllocError("Please select a renter."); return; }
+    if (!allocRenterId) { setAllocError("Please select a renter."); return; }
     if (!allocLeaseStart) { setAllocError("Lease start date is required (YYYY-MM-DD)."); return; }
-    if (!allocLeaseEnd)   { setAllocError("Lease end date is required (YYYY-MM-DD)."); return; }
+    if (!allocLeaseEnd) { setAllocError("Lease end date is required (YYYY-MM-DD)."); return; }
     setAllocSubmitting(true);
     setAllocError("");
     try {
@@ -513,12 +524,12 @@ export default function LandlordDashboard() {
   };
 
   const displayName = user?.fullName ?? user?.username ?? "there";
-  const initials    = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
+  const initials = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
 
-  const headerOpacity    = useSharedValue(0);
+  const headerOpacity = useSharedValue(0);
   const headerTranslateY = useSharedValue(-16);
   useEffect(() => {
-    headerOpacity.value    = withTiming(1, { duration: 400 });
+    headerOpacity.value = withTiming(1, { duration: 400 });
     headerTranslateY.value = withTiming(0, { duration: 400, easing: Easing.out(Easing.cubic) });
   }, []);
   const headerStyle = useAnimatedStyle(() => ({
@@ -530,10 +541,10 @@ export default function LandlordDashboard() {
     : Math.max(insets.top + 8, 32);
 
   const TABS = [
-    { id: "overview",   label: "Overview"   },
+    { id: "overview", label: "Overview" },
     { id: "properties", label: "Properties" },
-    { id: "tenants",    label: "Tenants"    },
-    { id: "finance",    label: "Finance"    },
+    { id: "tenants", label: "Tenants" },
+    { id: "finance", label: "Finance" },
   ] as const;
 
   return (
@@ -620,12 +631,12 @@ export default function LandlordDashboard() {
                   const name = lease.tenant?.fullName
                     ?? `${lease.firstName} ${lease.lastName}`;
                   const email = lease.tenant?.email ?? lease.email;
-                  const code  = lease.tenant?.landlordCode ?? "—";
-                  const prop  = lease.property?.name ?? "—";
+                  const code = lease.tenant?.landlordCode ?? "—";
+                  const prop = lease.property?.name ?? "—";
                   const start = lease.leaseStart
                     ? new Date(lease.leaseStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
                     : "—";
-                  const end   = lease.leaseEnd
+                  const end = lease.leaseEnd
                     ? new Date(lease.leaseEnd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
                     : "—";
                   const isLast = idx === tenants.length - 1;
@@ -698,13 +709,16 @@ export default function LandlordDashboard() {
                 )}
 
                 {!propsLoading && properties.map((prop, idx) => {
-                  const isLast    = idx === properties.length - 1;
-                  const isVacant  = prop.status === "VACANT";
+                  const isLast = idx === properties.length - 1;
+                  const isVacant = prop.status === "VACANT";
                   return (
                     <View key={prop._id} style={[s.propItem, !isLast && s.borderTop]}>
                       <View style={s.propTop}>
                         <View style={{ flex: 1 }}>
                           <Text style={s.propName}>{prop.name}</Text>
+                          {prop?.roomNumber ? (
+                            <Text style={[s.propAddr, { color: ACCENT_LIGHT, fontWeight: "bold" }]}>Room No- {prop?.roomNumber}</Text>
+                          ) : null}
                           <Text style={s.propAddr}>{prop.addressLine1}, {prop.city} {prop.postcode}</Text>
                           <Text style={s.propMeta}>{prop.propertyType} · {prop.bedrooms} BHK · {prop.furnishing.replace("_", " ")}</Text>
                         </View>
@@ -747,22 +761,22 @@ export default function LandlordDashboard() {
             {/* KPI row */}
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
-                  {QUICK_STATS.map((stat) => {
-                    const value =
-                      stat.label === "Tenants"
-                        ? tenantsLoading ? "…" : String(tenants.filter(t => t.leaseStart).length)
-                        : stat.label === "Properties"
-                          ? propsLoading ? "…" : String(properties.length)
-                          : stat.value;
-                    return (
-                      <View key={stat.label} style={[s.kpiCard, { backgroundColor: stat.bg }]}>
-                        <Text style={s.kpiIcon}>{stat.icon}</Text>
-                        <Text style={[s.kpiVal, { color: stat.color }]}>{value}</Text>
-                        <Text style={s.kpiLbl}>{stat.label}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
+                {QUICK_STATS.map((stat) => {
+                  const value =
+                    stat.label === "Tenants"
+                      ? tenantsLoading ? "…" : String(tenants.filter(t => t.leaseStart).length)
+                      : stat.label === "Properties"
+                        ? propsLoading ? "…" : String(properties.length)
+                        : stat.value;
+                  return (
+                    <View key={stat.label} style={[s.kpiCard, { backgroundColor: stat.bg }]}>
+                      <Text style={s.kpiIcon}>{stat.icon}</Text>
+                      <Text style={[s.kpiVal, { color: stat.color }]}>{value}</Text>
+                      <Text style={s.kpiLbl}>{stat.label}</Text>
+                    </View>
+                  );
+                })}
+              </View>
             </FadeIn>
 
             {/* Revenue + Occupancy */}
@@ -855,11 +869,11 @@ export default function LandlordDashboard() {
                 <View style={s.actionsGrid}>
                   {[
                     { label: "Add Property", color: ACCENT_LIGHT, route: "/landlord/add-property" },
-                    { label: "Add Tenant",   color: SUCCESS,       route: "/landlord/add-tenant"   },
-                    { label: "Send Notice",  color: WARNING,       route: "/landlord/send-notice"  },
-                    { label: "View Reports", color: PURPLE,        route: "/landlord/view-reports" },
-                    { label: "New Invoice",  color: ACCENT_LIGHT,  route: "/landlord/new-invoice"  },
-                    { label: "Inspections",  color: DANGER,        route: "/landlord/inspections"  },
+                    { label: "Add Tenant", color: SUCCESS, route: "/landlord/add-tenant" },
+                    { label: "Send Notice", color: WARNING, route: "/landlord/send-notice" },
+                    { label: "View Reports", color: PURPLE, route: "/landlord/view-reports" },
+                    { label: "New Invoice", color: ACCENT_LIGHT, route: "/landlord/new-invoice" },
+                    { label: "Inspections", color: DANGER, route: "/landlord/inspections" },
                   ].map((a) => (
                     <TouchableOpacity key={a.label} style={s.actionBtn} activeOpacity={0.7}
                       onPress={() => router.push(a.route as any)}>
@@ -933,7 +947,7 @@ export default function LandlordDashboard() {
 
             {/* Date pickers */}
             <MiniCalendar label="Lease Start Date" value={allocLeaseStart} onChange={setAllocLeaseStart} />
-            <MiniCalendar label="Lease End Date"   value={allocLeaseEnd}   onChange={setAllocLeaseEnd}   />
+            <MiniCalendar label="Lease End Date" value={allocLeaseEnd} onChange={setAllocLeaseEnd} />
 
             {allocError ? (
               <Text style={{ color: DANGER, fontSize: 12, marginBottom: 8 }}>{allocError}</Text>
@@ -959,129 +973,129 @@ export default function LandlordDashboard() {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: BRAND_BLUE },
 
-  header:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 14, backgroundColor: BRAND_DEEP, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
-  hLeft:      { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatar:     { width: 42, height: 42, borderRadius: 21, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: WHITE_20 },
-  avatarTxt:  { fontSize: 14, fontWeight: "800", color: WHITE },
-  greeting:   { fontSize: 11, color: WHITE_40, letterSpacing: 0.4, marginBottom: 1 },
-  userName:   { fontSize: 15, fontWeight: "700", color: WHITE },
-  hRight:     { flexDirection: "row", alignItems: "center", gap: 8 },
-  iconBtn:    { width: 38, height: 38, borderRadius: 12, backgroundColor: WHITE_08, alignItems: "center", justifyContent: "center" },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 14, backgroundColor: BRAND_DEEP, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
+  hLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: WHITE_20 },
+  avatarTxt: { fontSize: 14, fontWeight: "800", color: WHITE },
+  greeting: { fontSize: 11, color: WHITE_40, letterSpacing: 0.4, marginBottom: 1 },
+  userName: { fontSize: 15, fontWeight: "700", color: WHITE },
+  hRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  iconBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: WHITE_08, alignItems: "center", justifyContent: "center" },
   iconBtnTxt: { fontSize: 18 },
-  badge:      { position: "absolute", top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: DANGER, alignItems: "center", justifyContent: "center" },
-  badgeTxt:   { fontSize: 9, fontWeight: "800", color: WHITE },
+  badge: { position: "absolute", top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: DANGER, alignItems: "center", justifyContent: "center" },
+  badgeTxt: { fontSize: 9, fontWeight: "800", color: WHITE },
 
-  tabBar:      { backgroundColor: BRAND_DEEP, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
-  tabInner:    { paddingHorizontal: 14, paddingVertical: 8, gap: 6 },
-  tab:         { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: WHITE_05 },
-  tabActive:   { backgroundColor: ACCENT },
-  tabTxt:      { fontSize: 13, fontWeight: "500", color: WHITE_40 },
-  tabTxtActive:{ color: WHITE, fontWeight: "700" },
+  tabBar: { backgroundColor: BRAND_DEEP, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
+  tabInner: { paddingHorizontal: 14, paddingVertical: 8, gap: 6 },
+  tab: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: WHITE_05 },
+  tabActive: { backgroundColor: ACCENT },
+  tabTxt: { fontSize: 13, fontWeight: "500", color: WHITE_40 },
+  tabTxtActive: { color: WHITE, fontWeight: "700" },
 
-  body:        { flex: 1 },
+  body: { flex: 1 },
   bodyContent: { padding: 16, gap: 14 },
 
-  kpiRow:  { flexDirection: "row", gap: 10 },
+  kpiRow: { flexDirection: "row", gap: 10 },
   kpiCard: { flex: 1, borderRadius: 14, padding: 12, alignItems: "center", borderWidth: 1, borderColor: WHITE_08 },
   kpiIcon: { fontSize: 20, marginBottom: 6 },
-  kpiVal:  { fontSize: 20, fontWeight: "800", marginBottom: 2 },
-  kpiLbl:  { fontSize: 10, color: WHITE_40, letterSpacing: 0.4, textAlign: "center" },
+  kpiVal: { fontSize: 20, fontWeight: "800", marginBottom: 2 },
+  kpiLbl: { fontSize: 10, color: WHITE_40, letterSpacing: 0.4, textAlign: "center" },
 
-  card:    { backgroundColor: WHITE_08, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: WHITE_15 },
-  twoCol:  { flexDirection: "row", gap: 12 },
-  half:    { flex: 1 },
+  card: { backgroundColor: WHITE_08, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: WHITE_15 },
+  twoCol: { flexDirection: "row", gap: 12 },
+  half: { flex: 1 },
   cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   cardTitle: { fontSize: 13, fontWeight: "700", color: WHITE_72, letterSpacing: 0.3 },
-  bigVal:  { fontSize: 24, fontWeight: "800", color: WHITE, marginBottom: 2 },
+  bigVal: { fontSize: 24, fontWeight: "800", color: WHITE, marginBottom: 2 },
   cardSub: { fontSize: 11, color: WHITE_40 },
-  pill:    { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
+  pill: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
   pillTxt: { fontSize: 11, fontWeight: "700" },
 
-  rentRow:  { flexDirection: "row", alignItems: "center", justifyContent: "space-around", marginVertical: 14 },
+  rentRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", marginVertical: 14 },
   rentStat: { alignItems: "center", gap: 4 },
-  rentVal:  { fontSize: 28, fontWeight: "800" },
-  rentLbl:  { fontSize: 11, color: WHITE_40 },
-  rentDiv:  { width: 1, height: 40, backgroundColor: WHITE_15 },
-  progTrack:{ height: 6, backgroundColor: WHITE_08, borderRadius: 3, overflow: "hidden", marginTop: 4 },
+  rentVal: { fontSize: 28, fontWeight: "800" },
+  rentLbl: { fontSize: 11, color: WHITE_40 },
+  rentDiv: { width: 1, height: 40, backgroundColor: WHITE_15 },
+  progTrack: { height: 6, backgroundColor: WHITE_08, borderRadius: 3, overflow: "hidden", marginTop: 4 },
   progFill: { height: 6, borderRadius: 3 },
-  progLbl:  { fontSize: 11, color: WHITE_40, marginTop: 6, textAlign: "center" },
+  progLbl: { fontSize: 11, color: WHITE_40, marginTop: 6, textAlign: "center" },
 
-  emptyState:  { paddingVertical: 16, alignItems: "center" as const },
-  emptyTxt:    { fontSize: 13, color: WHITE_40 },
+  emptyState: { paddingVertical: 16, alignItems: "center" as const },
+  emptyTxt: { fontSize: 13, color: WHITE_40 },
 
-  borderTop:   { borderTopWidth: 1, borderTopColor: WHITE_08 },
-  maintItem:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },
-  maintLeft:   { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  priorDot:    { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
-  maintUnit:   { fontSize: 13, fontWeight: "600", color: WHITE, marginBottom: 2 },
-  maintIssue:  { fontSize: 11, color: WHITE_40 },
-  maintRight:  { alignItems: "flex-end", gap: 4 },
+  borderTop: { borderTopWidth: 1, borderTopColor: WHITE_08 },
+  maintItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },
+  maintLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  priorDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  maintUnit: { fontSize: 13, fontWeight: "600", color: WHITE, marginBottom: 2 },
+  maintIssue: { fontSize: 11, color: WHITE_40 },
+  maintRight: { alignItems: "flex-end", gap: 4 },
   statusBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  statusTxt:   { fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
-  daysAgo:     { fontSize: 10, color: WHITE_40 },
+  statusTxt: { fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
+  daysAgo: { fontSize: 10, color: WHITE_40 },
 
-  actItem:    { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
-  actBorder:  { borderBottomWidth: 1, borderBottomColor: WHITE_08 },
-  actIcon:    { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  actItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
+  actBorder: { borderBottomWidth: 1, borderBottomColor: WHITE_08 },
+  actIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   actIconTxt: { fontSize: 17 },
-  actBody:    { flex: 1 },
-  actTitle:   { fontSize: 13, fontWeight: "600", color: WHITE, marginBottom: 2 },
-  actDesc:    { fontSize: 11, color: WHITE_40 },
-  actTime:    { fontSize: 10, color: WHITE_40, flexShrink: 0 },
+  actBody: { flex: 1 },
+  actTitle: { fontSize: 13, fontWeight: "600", color: WHITE, marginBottom: 2 },
+  actDesc: { fontSize: 11, color: WHITE_40 },
+  actTime: { fontSize: 10, color: WHITE_40, flexShrink: 0 },
 
-  evItem:      { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
-  evBorder:    { borderBottomWidth: 1, borderBottomColor: WHITE_08 },
-  evDot:       { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
-  evTitle:     { flex: 1, fontSize: 13, fontWeight: "500", color: WHITE_90 },
+  evItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
+  evBorder: { borderBottomWidth: 1, borderBottomColor: WHITE_08 },
+  evDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
+  evTitle: { flex: 1, fontSize: 13, fontWeight: "500", color: WHITE_90 },
   evDateBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, flexShrink: 0 },
-  evDate:      { fontSize: 11, fontWeight: "700" },
+  evDate: { fontSize: 11, fontWeight: "700" },
 
-  actionsGrid:    { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  actionBtn:      { width: "30%", flexGrow: 1, alignItems: "center", paddingVertical: 14, backgroundColor: WHITE_05, borderRadius: 14, borderWidth: 1, borderColor: WHITE_08 },
-  actionDot:      { width: 36, height: 36, borderRadius: 18, marginBottom: 8 },
-  actionLbl:      { fontSize: 11, fontWeight: "600", color: WHITE_72, textAlign: "center" },
+  actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  actionBtn: { width: "30%", flexGrow: 1, alignItems: "center", paddingVertical: 14, backgroundColor: WHITE_05, borderRadius: 14, borderWidth: 1, borderColor: WHITE_08 },
+  actionDot: { width: 36, height: 36, borderRadius: 18, marginBottom: 8 },
+  actionLbl: { fontSize: 11, fontWeight: "600", color: WHITE_72, textAlign: "center" },
 
-  signOut:    { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
+  signOut: { alignItems: "center", justifyContent: "center", height: 50, borderRadius: 16, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
   signOutTxt: { fontSize: 14, fontWeight: "600", color: WHITE_40 },
 
-  tenantItem:      { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
-  tenantAvatar:    { width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  tenantItem: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: WHITE_08 },
+  tenantAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   tenantAvatarTxt: { fontSize: 13, fontWeight: "800", color: WHITE },
-  tenantBody:      { flex: 1, gap: 3 },
-  tenantName:      { fontSize: 14, fontWeight: "700", color: WHITE },
-  tenantMeta:      { fontSize: 11, color: WHITE_40 },
-  tenantRow:       { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" as const },
+  tenantBody: { flex: 1, gap: 3 },
+  tenantName: { fontSize: 14, fontWeight: "700", color: WHITE },
+  tenantMeta: { fontSize: 11, color: WHITE_40 },
+  tenantRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" as const },
 
   // ── Property list items ────────────────────────────────────────────────────
-  propItem:    { paddingVertical: 14 },
-  propTop:     { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 8 },
-  propName:    { fontSize: 14, fontWeight: "700", color: WHITE, marginBottom: 2 },
-  propAddr:    { fontSize: 11, color: WHITE_40, marginBottom: 2 },
-  propMeta:    { fontSize: 11, color: WHITE_40 },
-  propBottom:  { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
-  propRent:    { fontSize: 13, fontWeight: "700", color: SUCCESS },
+  propItem: { paddingVertical: 14 },
+  propTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 8 },
+  propName: { fontSize: 14, fontWeight: "700", color: WHITE, marginBottom: 2 },
+  propAddr: { fontSize: 11, color: WHITE_40, marginBottom: 2 },
+  propMeta: { fontSize: 11, color: WHITE_40 },
+  propBottom: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
+  propRent: { fontSize: 13, fontWeight: "700", color: SUCCESS },
   propDeposit: { fontSize: 11, color: WHITE_40 },
-  allocBtn:    { marginLeft: "auto" as any, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: `${ACCENT_LIGHT}22`, borderWidth: 1, borderColor: ACCENT_LIGHT },
+  allocBtn: { marginLeft: "auto" as any, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: `${ACCENT_LIGHT}22`, borderWidth: 1, borderColor: ACCENT_LIGHT },
   allocBtnTxt: { fontSize: 11, fontWeight: "700", color: ACCENT_LIGHT },
 
   // ── Allocate Modal ─────────────────────────────────────────────────────────
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)", justifyContent: "flex-end" },
-  modalSheet:   { backgroundColor: "#1A3C5E", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 1, borderColor: "rgba(255,255,255,0.12)", maxHeight: "85%" },
-  modalHeader:  { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  modalTitle:   { fontSize: 16, fontWeight: "800", color: WHITE },
-  modalClose:   { width: 32, height: 32, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
-  modalCloseTxt:{ fontSize: 14, color: WHITE_40 },
-  modalSub:     { fontSize: 12, color: WHITE_40, marginBottom: 16 },
-  modalLbl:     { fontSize: 11, fontWeight: "600", color: WHITE_72, marginBottom: 6, letterSpacing: 0.3 },
-  modalInput:   { backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: WHITE, marginBottom: 14 },
-  modalBtn:     { backgroundColor: ACCENT, borderRadius: 14, height: 50, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  modalBtnTxt:  { fontSize: 14, fontWeight: "800", color: WHITE, letterSpacing: 0.3 },
-  renterList:   { maxHeight: 160, marginBottom: 4 },
-  renterItem:   { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)" },
+  modalSheet: { backgroundColor: "#1A3C5E", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 1, borderColor: "rgba(255,255,255,0.12)", maxHeight: "85%" },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  modalTitle: { fontSize: 16, fontWeight: "800", color: WHITE },
+  modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  modalCloseTxt: { fontSize: 14, color: WHITE_40 },
+  modalSub: { fontSize: 12, color: WHITE_40, marginBottom: 16 },
+  modalLbl: { fontSize: 11, fontWeight: "600", color: WHITE_72, marginBottom: 6, letterSpacing: 0.3 },
+  modalInput: { backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: WHITE, marginBottom: 14 },
+  modalBtn: { backgroundColor: ACCENT, borderRadius: 14, height: 50, alignItems: "center", justifyContent: "center", marginTop: 4 },
+  modalBtnTxt: { fontSize: 14, fontWeight: "800", color: WHITE, letterSpacing: 0.3 },
+  renterList: { maxHeight: 160, marginBottom: 4 },
+  renterItem: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)" },
   renterItemActive: { backgroundColor: "rgba(74,144,217,0.12)", borderRadius: 8, paddingHorizontal: 8 },
-  renterDot:    { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
-  renterDotActive:  { backgroundColor: ACCENT_LIGHT, borderColor: ACCENT_LIGHT },
+  renterDot: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  renterDotActive: { backgroundColor: ACCENT_LIGHT, borderColor: ACCENT_LIGHT },
   renterDotTxt: { fontSize: 10, color: WHITE, fontWeight: "800" },
-  renterName:   { fontSize: 13, fontWeight: "600", color: WHITE_72, marginBottom: 1 },
-  renterEmail:  { fontSize: 11, color: WHITE_40 },
+  renterName: { fontSize: 13, fontWeight: "600", color: WHITE_72, marginBottom: 1 },
+  renterEmail: { fontSize: 11, color: WHITE_40 },
 });

@@ -425,13 +425,13 @@ export default function RenterDashboard() {
                       </View>
                       <View style={s.propDetails}>
                         <Text style={s.propName}>{lease.property?.name ?? "—"}</Text>
+                        {lease.property?.roomNumber ? (
+                          <Text style={[s.propAddr, { color: ACCENT_LIGHT, fontWeight: "bold" }]}>Room No- {lease.property.roomNumber}</Text>
+                        ) : null}
                         <Text style={s.propAddr}>
                           {lease.property?.addressLine1 ?? ""}{lease.property?.city ? `, ${lease.property.city}` : ""}
                           {lease.property?.postcode ? ` ${lease.property.postcode}` : ""}
                         </Text>
-                        {lease.property?.roomNumber ? (
-                          <Text style={[s.propAddr, { color: ACCENT_LIGHT }]}>Room: {lease.property.roomNumber}</Text>
-                        ) : null}
                         <View style={s.propTagRow}>
                           <View style={[s.propTag, { backgroundColor: SUCCESS_BG }]}>
                             <Text style={[s.propTagTxt, { color: SUCCESS }]}>Active Lease</Text>
