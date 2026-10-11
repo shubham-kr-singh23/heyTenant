@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Linking,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -20,7 +21,10 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { useClerk, useUser } from "@clerk/expo";
+import { useAuth, useClerk, useUser } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import type { LandlordDashboardData } from "../../types/landlordDashboard";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 // â”€â”€â”€ Palette (matches dashboard) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const BRAND_BLUE   = "#1A3C5E";
@@ -45,26 +49,20 @@ const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
 const PORTFOLIO_STATS = [
-  { label: "Properties", value: "--", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)"  },
-  { label: "Tenants",    value: "--", color: SUCCESS,       bg: SUCCESS_BG               },
-  { label: "Vacancies",  value: "--", color: DANGER,        bg: DANGER_BG                },
-  { label: "Avg. Yield", value: "--", color: PURPLE,        bg: PURPLE_BG                },
+  { label: "Properties", key: "propertyCount" as const, color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Tenants", key: "activeTenantCount" as const, color: SUCCESS, bg: SUCCESS_BG },
+  { label: "Vacancies", key: "vacantProperties" as const, color: DANGER, bg: DANGER_BG },
+  { label: "Occupancy", key: "occupancyPercentage" as const, color: PURPLE, bg: PURPLE_BG },
 ];
 
-const DOCUMENTS = [
-  { id: "1", icon: "\uD83D\uDCC4", label: "Landlord Licence",        sub: "Valid until Dec 2025",   color: SUCCESS      },
-  { id: "2", icon: "\uD83D\uDCCB", label: "Insurance Certificate",   sub: "Buildings & Contents",   color: ACCENT_LIGHT },
-  { id: "3", icon: "\uD83C\uDFE6", label: "Tax Self-Assessment",     sub: "2023\u201324 filed",     color: PURPLE       },
-  { id: "4", icon: "\uD83D\uDCDD", label: "EICR Report",             sub: "All properties current", color: WARNING      },
-  { id: "5", icon: "\uD83D\uDD12", label: "Gas Safety Certificates", sub: "Next due Jan 2025",      color: DANGER       },
-];
+const DOCUMENTS: { id: string; icon: string; label: string; sub: string; color: string }[] = [];
 
 const QUICK_LINKS = [
-  { id: "1", icon: "\uD83C\uDFE0", label: "Gov.uk Landlord Guide",  url: "https://www.gov.uk/renting-out-a-property"                        },
-  { id: "2", icon: "\u2696\uFE0F", label: "NRLA Membership",        url: "https://www.nrla.org.uk"                                           },
-  { id: "3", icon: "\uD83D\uDD0D", label: "Property Ombudsman",     url: "https://www.tpos.co.uk"                                            },
-  { id: "4", icon: "\uD83D\uDCB7", label: "Deposit Protection",     url: "https://www.depositprotection.com"                                 },
-  { id: "5", icon: "\uD83D\uDCCA", label: "HMRC Property Income",   url: "https://www.gov.uk/income-tax-when-you-rent-out-a-property"        },
+  { id: "1", icon: "\uD83C\uDFE0", label: "Model Tenancy Act, 2021 (MoHUA)", url: "https://mohua.gov.in/upload/uploadfiles/files/Model_Tenancy_Act_2021.pdf" },
+  { id: "2", icon: "\u2696\uFE0F", label: "Transfer of Property Act, 1882",   url: "https://www.indiacode.nic.in/bitstream/123456789/2338/1/A1882-04.pdf" },
+  { id: "3", icon: "\uD83D\uDCDD", label: "Registration Act, 1908",           url: "https://www.indiacode.nic.in/handle/123456789/2190" },
+  { id: "4", icon: "\uD83D\uDCB7", label: "Income Tax Department",            url: "https://www.incometax.gov.in/" },
+  { id: "5", icon: "\uD83D\uDD0D", label: "National Consumer Helpline",       url: "https://consumerhelpline.gov.in/" },
 ];
 
 // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -97,7 +95,7 @@ function VerifiedBadge() {
   return (
     <View style={vb.wrap}>
       <Text style={vb.icon}>{"\u2713"}</Text>
-      <Text style={vb.txt}>Verified</Text>
+      <Text style={vb.txt}>Landlord</Text>
     </View>
   );
 }
@@ -135,8 +133,38 @@ function getInitials(name: string): string {
 export default function LandlordProfile() {
   const router      = useRouter();
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
   const { user }    = useUser();
   const [signingOut, setSigningOut] = useState(false);
+  const [portfolio, setPortfolio] = useState<LandlordDashboardData | null>(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState("");
+
+  const fetchPortfolio = useCallback(async () => {
+    setPortfolioLoading(true);
+    setPortfolioError("");
+    try {
+      const token = await getToken();
+      if (!token) { setPortfolioError("Not authenticated."); return; }
+      const response = await fetch(`${API_URL}/api/landlord/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        setPortfolioError(json?.error?.message ?? "Could not load portfolio data.");
+        return;
+      }
+      setPortfolio(json?.data ?? null);
+    } catch {
+      setPortfolioError("Network error — is the server running?");
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => {
+    void fetchPortfolio();
+  });
 
   const displayName = user?.fullName ?? user?.username ?? "--";
   const initials    = user?.fullName ? getInitials(user.fullName)
@@ -149,7 +177,10 @@ export default function LandlordProfile() {
     : "--";
   const bio         = (user?.unsafeMetadata?.bio as string | undefined) ?? "--";
   const licenceNo   = (user?.unsafeMetadata?.licenceNo as string | undefined) ?? "--";
-  const taxRef      = (user?.unsafeMetadata?.taxRef as string | undefined) ?? "--";
+  const taxRef      = (user?.unsafeMetadata?.pan as string | undefined) ?? "--";
+  const experience  = user?.createdAt
+    ? Math.max(0, new Date().getFullYear() - new Date(user.createdAt).getFullYear())
+    : null;
 
   const handleSignOut = () => {
     Alert.alert(
@@ -233,6 +264,7 @@ export default function LandlordProfile() {
         style={s.scroll}
         contentContainerStyle={[s.scrollContent, { paddingBottom: Math.max(insets.bottom + 32, 48) }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={portfolioLoading} onRefresh={() => { void fetchPortfolio(); }} tintColor={ACCENT_LIGHT} />}
       >
         {/* â•â•â•â• HERO CARD â•â•â•â• */}
         <FadeIn delay={0}>
@@ -252,22 +284,26 @@ export default function LandlordProfile() {
 
             <View style={s.heroStrip}>
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>—</Text>
                 <Text style={s.heroStatLbl}>Rating</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>
+                  {portfolioLoading && !portfolio ? "…" : portfolioError && !portfolio ? "—" : portfolio?.metrics?.propertyCount ?? 0}
+                </Text>
                 <Text style={s.heroStatLbl}>Properties</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>
+                  {portfolioLoading && !portfolio ? "…" : portfolioError && !portfolio ? "—" : portfolio?.metrics?.activeTenantCount ?? 0}
+                </Text>
                 <Text style={s.heroStatLbl}>Tenants</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>{experience === null ? "—" : experience}</Text>
                 <Text style={s.heroStatLbl}>Experience</Text>
               </View>
             </View>
@@ -334,23 +370,20 @@ export default function LandlordProfile() {
                   <View style={s.compDivider} />
                   <View style={s.complianceItem}>
                     <Text style={s.complianceIcon}>{"\uD83D\uDCBC"}</Text>
-                    <Text style={s.complianceLbl}>Tax Ref (UTR)</Text>
+                    <Text style={s.complianceLbl}>PAN</Text>
                     <Text style={s.complianceVal}>{taxRef}</Text>
                   </View>
                 </View>
-                <View style={s.complianceBadgeRow}>
-                  {[
-                    { label: "Gas Safe",    color: SUCCESS      },
-                    { label: "EPC Rated",   color: ACCENT_LIGHT },
-                    { label: "DPS Member",  color: PURPLE       },
-                    { label: "NRLA Member", color: WARNING      },
-                  ].map((b) => (
-                    <View key={b.label} style={[s.compBadge, { backgroundColor: `${b.color}18`, borderColor: `${b.color}35` }]}>
-                      <View style={[s.compBadgeDot, { backgroundColor: b.color }]} />
-                      <Text style={[s.compBadgeTxt, { color: b.color }]}>{b.label}</Text>
-                    </View>
-                  ))}
-                </View>
+                <Text style={{ color: WHITE_40, fontSize: 11, textAlign: "center" }}>
+                  Compliance documents and registrations can be listed after they are added to your profile.
+                </Text>
+                <TouchableOpacity
+                  style={{ marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: WHITE_08, alignItems: "center" }}
+                  onPress={() => router.push("/landlord/documents")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: ACCENT_LIGHT, fontSize: 13, fontWeight: "700" }}>Manage Shared Documents</Text>
+                </TouchableOpacity>
               </View>
             </FadeIn>
 
@@ -383,7 +416,11 @@ export default function LandlordProfile() {
               <View style={s.kpiRow}>
                 {PORTFOLIO_STATS.map((stat) => (
                   <View key={stat.label} style={[s.kpiCard, { backgroundColor: stat.bg }]}>
-                    <Text style={[s.kpiVal, { color: stat.color }]}>{stat.value}</Text>
+                    <Text style={[s.kpiVal, { color: stat.color }]}>
+                      {portfolioLoading && !portfolio ? "…" : portfolioError && !portfolio
+                        ? "—"
+                        : `${portfolio?.metrics?.[stat.key] ?? 0}${stat.key === "occupancyPercentage" ? "%" : ""}`}
+                    </Text>
                     <Text style={s.kpiLbl}>{stat.label}</Text>
                   </View>
                 ))}
@@ -394,25 +431,47 @@ export default function LandlordProfile() {
               <View style={s.revenueCard}>
                 <View style={s.revLeft}>
                   <Text style={s.revLabel}>Monthly Revenue</Text>
-                  <Text style={s.revAmount}>--</Text>
+                  <Text style={s.revAmount}>
+                    {portfolioError && !portfolio ? "—" : `₹${(portfolio?.metrics?.monthlyRevenue ?? 0).toLocaleString("en-IN")}`}
+                  </Text>
                   <View style={s.revBadge}>
-                    <Text style={s.revBadgeTxt}>No data yet</Text>
+                    <Text style={s.revBadgeTxt}>Collected this month</Text>
                   </View>
                 </View>
                 <View style={s.revRight}>
                   <Text style={s.revLabel}>Annual (projected)</Text>
-                  <Text style={s.revAnnual}>--</Text>
-                  <Text style={s.revSub}>Net yield: --</Text>
+                  <Text style={s.revAnnual}>
+                    {portfolioError && !portfolio ? "—" : `₹${(portfolio?.metrics?.annualizedProjectedRent ?? 0).toLocaleString("en-IN")}`}
+                  </Text>
+                  <Text style={s.revSub}>Projected annual rent</Text>
                 </View>
               </View>
             </FadeIn>
 
             <FadeIn delay={120}>
               <View style={s.card}>
-                <SectionHeader title="Properties" sub="--" />
-                <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No properties added yet</Text>
-                </View>
+                <SectionHeader title="Properties" sub={portfolio ? `${portfolio.metrics.propertyCount}` : ""} />
+                {portfolioLoading && !portfolio ? <ActivityIndicator color={ACCENT_LIGHT} /> :
+                  portfolioError && !portfolio ? <Text style={[s.progLbl, { color: DANGER }]}>{portfolioError}</Text> :
+                  portfolio?.properties?.length
+                    ? portfolio.properties.map((property, index) => (
+                      <View key={property._id} style={[s.propItem, index < portfolio.properties.length - 1 && s.propBorder]}>
+                        <View style={s.propIconWrap}><Text style={s.propIcon}>🏠</Text></View>
+                        <View style={s.propBody}>
+                          <Text style={s.propName}>{property.name}</Text>
+                          <Text style={s.propLocation}>{property.addressLine1}, {property.city}</Text>
+                          <Text style={s.propLocation}>₹{Number(property.monthlyRent).toLocaleString("en-IN")}/month</Text>
+                        </View>
+                        <View style={[s.propBadge, { backgroundColor: property.status === "OCCUPIED" ? SUCCESS_BG : WARNING_BG }]}>
+                          <Text style={[s.propBadgeTxt, { color: property.status === "OCCUPIED" ? SUCCESS : WARNING }]}>
+                            {property.status === "OCCUPIED" ? "Occupied" : "Vacant"}
+                          </Text>
+                        </View>
+                      </View>
+                    ))
+                    : <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                      <Text style={{ color: WHITE_40, fontSize: 13 }}>No properties added yet</Text>
+                    </View>}
               </View>
             </FadeIn>
 
@@ -421,24 +480,33 @@ export default function LandlordProfile() {
                 <SectionHeader title="Rent Collection" />
                 <View style={s.collectRow}>
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: SUCCESS }]}>--</Text>
+                    <Text style={[s.collectVal, { color: SUCCESS }]}>₹{(portfolio?.metrics?.rentCollection?.collected ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.collectLbl}>Collected</Text>
                   </View>
                   <View style={s.collectDiv} />
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: WARNING }]}>--</Text>
+                    <Text style={[s.collectVal, { color: WARNING }]}>₹{(portfolio?.metrics?.rentCollection?.pending ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.collectLbl}>Pending</Text>
                   </View>
                   <View style={s.collectDiv} />
                   <View style={s.collectStat}>
-                    <Text style={[s.collectVal, { color: DANGER }]}>--</Text>
+                    <Text style={[s.collectVal, { color: DANGER }]}>₹{(portfolio?.metrics?.rentCollection?.overdue ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.collectLbl}>Overdue</Text>
                   </View>
                 </View>
                 <View style={s.progTrack}>
-                  <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
+                  <View style={[s.progFill, {
+                    width: `${portfolio?.metrics?.rentCollection?.expected
+                      ? Math.min(100, Math.round((portfolio.metrics.rentCollection.collected / portfolio.metrics.rentCollection.expected) * 100))
+                      : 0}%`,
+                    backgroundColor: SUCCESS,
+                  }]} />
                 </View>
-                <Text style={s.progLbl}>No rent data available yet</Text>
+                <Text style={s.progLbl}>
+                  {portfolioError || `${portfolio?.metrics?.rentCollection?.expected
+                    ? Math.min(100, Math.round((portfolio.metrics.rentCollection.collected / portfolio.metrics.rentCollection.expected) * 100))
+                    : 0}% of expected monthly rent collected`}
+                </Text>
               </View>
             </FadeIn>
           </>
@@ -456,8 +524,12 @@ export default function LandlordProfile() {
 
             <FadeIn delay={60}>
               <View style={s.card}>
-                <SectionHeader title="My Documents" sub="5 files" />
-                {DOCUMENTS.map((doc, i) => (
+                <SectionHeader title="My Documents" sub={`${DOCUMENTS.length} files`} />
+                {DOCUMENTS.length === 0
+                  ? <Text style={{ color: WHITE_40, fontSize: 13, textAlign: "center", paddingVertical: 18 }}>
+                    No documents have been uploaded for this account.
+                  </Text>
+                  : DOCUMENTS.map((doc, i) => (
                   <TouchableOpacity
                     key={doc.id}
                     style={[s.docItem, i < DOCUMENTS.length - 1 && s.docBorder]}
@@ -478,12 +550,6 @@ export default function LandlordProfile() {
               </View>
             </FadeIn>
 
-            <FadeIn delay={120}>
-              <TouchableOpacity style={s.uploadBtn} activeOpacity={0.8}>
-                <Text style={s.uploadIcon}>{"\u2B06"}</Text>
-                <Text style={s.uploadTxt}>Upload New Document</Text>
-              </TouchableOpacity>
-            </FadeIn>
           </>
         )}
 
@@ -636,4 +702,3 @@ const s = StyleSheet.create({
   signOutDisabled: { opacity: 0.5 },
   signOutTxt:      { fontSize: 14, fontWeight: "600", color: "#F87171" },
 });
-

@@ -82,10 +82,12 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [focused, setFocused] = useState<"email" | "password" | null>(null);
+  const [focused, setFocused] = useState<"email" | "password" | "verificationCode" | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [clientTrustRequired, setClientTrustRequired] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
 
   // -- Clerk hooks
   const { startSSOFlow } = useSSO();
@@ -123,6 +125,8 @@ export default function LoginScreen() {
     setEmail("");
     setPassword("");
     setLoginError("");
+    setClientTrustRequired(false);
+    setVerificationCode("");
     const TAB_WIDTH = (width - 48 - 8) / 2;
     pillX.value = withSpring(next === "renter" ? 0 : TAB_WIDTH, {
       damping: 18,
@@ -141,6 +145,38 @@ export default function LoginScreen() {
   // -- Press handlers
   const handlePressIn  = () => { buttonScale.value = withSpring(0.97, { damping: 15, stiffness: 300 }); };
   const handlePressOut = () => { buttonScale.value = withSpring(1,    { damping: 15, stiffness: 300 }); };
+  const finishLogin = useCallback(async (sessionId: string | null) => {
+    if (!sessionId) throw new Error("Clerk did not create a session.");
+    await setActive!({ session: sessionId });
+
+    try {
+      const token = await getToken();
+      if (token) {
+        const response = await fetch(`${API_URL}/api/auth/login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ role: role.toUpperCase() }),
+        });
+        if (!response.ok) {
+          await signOut();
+          const body = await response.json().catch(() => null);
+          setLoginError(body?.error?.message ?? (role === "landlord"
+            ? "This account is not registered as a Landlord."
+            : "This account is not registered as a Renter."));
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("[login] role-check failed:", error);
+      // Network failure — still allow navigation rather than hard-blocking.
+    }
+
+    router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+  }, [getToken, role, router, setActive, signOut]);
+
   const handleLogin = useCallback(async () => {
     if (!isLoaded || !email.trim() || !password) {
       setLoginError("Please enter your email and password.");
@@ -151,48 +187,33 @@ export default function LoginScreen() {
     try {
       const result = await signIn!.create({
         identifier: email.trim().toLowerCase(),
+        strategy: "password",
         password,
       });
       if (result.status === "complete") {
-        await setActive!({ session: result.createdSessionId });
-
-        // ── Role validation ────────────────────────────────────────────────────
-        // After Clerk activates the session, call our backend /api/auth/login
-        // which checks that this Clerk account belongs to the selected role.
-        // If the account exists in the wrong collection (e.g. a renter trying
-        // to log in as a landlord) the backend returns 403 and we block access.
-        try {
-          const token = await getToken();
-          if (token) {
-            const r = await fetch(`${API_URL}/api/auth/login`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                role: role.toUpperCase(),
-              }),
-            });
-            if (!r.ok) {
-              // Role mismatch or account not found — sign out Clerk session
-              await signOut();
-              const body = await r.json().catch(() => null);
-              const msg = body?.error?.message ?? (role === "landlord"
-                ? "This account is not registered as a Landlord."
-                : "This account is not registered as a Renter.");
-              setLoginError(msg);
-              return;
-            }
-          }
-        } catch (e) {
-          console.warn("[login] role-check failed:", e);
-          // Network failure — still allow navigation rather than hard-blocking
+        await finishLogin(result.createdSessionId);
+      } else if (result.status === "needs_client_trust") {
+        const emailCodeFactor = result.supportedSecondFactors?.find(
+          (factor) => factor.strategy === "email_code",
+        );
+        if (!emailCodeFactor) {
+          setLoginError("This device needs verification, but email-code verification is not enabled for this account.");
+          return;
         }
-
-        router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
+        await signIn!.prepareSecondFactor({
+          strategy: "email_code",
+          emailAddressId: emailCodeFactor.emailAddressId,
+        });
+        setVerificationCode("");
+        setClientTrustRequired(true);
+        setLoginError("");
       } else {
-        setLoginError("Sign-in incomplete. Please try again.");
+        console.warn("[login] Clerk sign-in requires another step:", {
+          status: result.status,
+          supportedFirstFactors: result.supportedFirstFactors?.map((factor) => factor.strategy),
+          supportedSecondFactors: result.supportedSecondFactors?.map((factor) => factor.strategy),
+        });
+        setLoginError(`Sign-in requires additional verification (${result.status}). Please contact support.`);
       }
     } catch (err: any) {
       const msg: string =
@@ -204,7 +225,35 @@ export default function LoginScreen() {
     } finally {
       setLoginLoading(false);
     }
-  }, [isLoaded, email, password, role, signIn, setActive, signOut, router]);
+  }, [isLoaded, email, password, signIn, finishLogin]);
+
+  const handleVerifyClientTrust = useCallback(async () => {
+    if (!isLoaded || !verificationCode.trim()) {
+      setLoginError("Enter the verification code sent to your email.");
+      return;
+    }
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const result = await signIn!.attemptSecondFactor({
+        strategy: "email_code",
+        code: verificationCode.trim(),
+      });
+      if (result.status === "complete") {
+        await finishLogin(result.createdSessionId);
+      } else {
+        setLoginError(`Verification requires another step (${result.status}).`);
+      }
+    } catch (err: any) {
+      const msg: string = err?.errors?.[0]?.longMessage
+        ?? err?.errors?.[0]?.message
+        ?? err?.message
+        ?? "Unable to verify the code. Please try again.";
+      setLoginError(msg);
+    } finally {
+      setLoginLoading(false);
+    }
+  }, [isLoaded, verificationCode, signIn, finishLogin]);
   const handleBack = () => router.back();
 
   // -- Google Sign-In via Clerk SSO
@@ -337,6 +386,7 @@ export default function LoginScreen() {
 
         {/* -- Form */}
         <Animated.View style={[styles.formSection, formStyle]}>
+          {!clientTrustRequired ? <>
           {/* Email */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Email address</Text>
@@ -392,6 +442,28 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          </> : <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Verify this device</Text>
+            <Text style={[styles.subtitle, { textAlign: "left", marginBottom: 12 }]}>
+              Enter the verification code sent to {email.trim()}.
+            </Text>
+            <View style={[styles.inputWrapper, focused === "verificationCode" && styles.inputFocused]}>
+              <Text style={styles.inputIcon}>✉</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="6-digit verification code"
+                placeholderTextColor={WHITE_40}
+                keyboardType="number-pad"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={verificationCode}
+                onChangeText={(value) => { setVerificationCode(value.replace(/\D/g, "").slice(0, 6)); setLoginError(""); }}
+                onFocus={() => setFocused("verificationCode")}
+                onBlur={() => setFocused(null)}
+                selectionColor={cfg.btnColor}
+              />
+            </View>
+          </View>}
 
           {/* Error message */}
           {!!loginError && (
@@ -404,15 +476,28 @@ export default function LoginScreen() {
               style={[styles.signInBtn, { backgroundColor: cfg.btnColor }, loginLoading && { opacity: 0.6 }]}
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
-              onPress={handleLogin}
+              onPress={clientTrustRequired ? handleVerifyClientTrust : handleLogin}
               activeOpacity={1}
               disabled={loginLoading}
             >
               {loginLoading
                 ? <ActivityIndicator color={WHITE} />
-                : <Text style={styles.signInText}>{cfg.btnLabel}</Text>}
+                : <Text style={styles.signInText}>{clientTrustRequired ? "Verify code" : cfg.btnLabel}</Text>}
             </TouchableOpacity>
           </Animated.View>
+          {clientTrustRequired && (
+            <TouchableOpacity
+              style={{ alignSelf: "center", marginTop: 16 }}
+              onPress={() => {
+                setClientTrustRequired(false);
+                setVerificationCode("");
+                setLoginError("");
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.forgotText, { color: cfg.btnColor }]}>Back to sign in</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Divider */}
           {/* <View style={styles.dividerRow}>

@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -34,8 +37,26 @@ const INVOICE_TYPES = [
   { id: "other",       label: "Other",           icon: "📄", color: WHITE_72     },
 ];
 
-const TENANTS: { id: string; name: string; unit: string; rent: string }[] = [];
-const RECENT_INVOICES: { id: string; tenant: string; type: string; amount: string; date: string; status: string }[] = [];
+type TenantOption = {
+  _id: string;
+  status?: string;
+  firstName?: string;
+  lastName?: string;
+  monthlyRent?: number;
+  tenant?: { _id: string; fullName?: string };
+  property?: { name?: string };
+};
+type InvoiceRecord = {
+  _id: string;
+  invoiceNumber: string;
+  type: string;
+  amount: number;
+  dueDate: string;
+  status: "PENDING" | "PAID" | "OVERDUE";
+  notes?: string;
+  tenant?: { fullName?: string };
+  createdAt: string;
+};
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(18);
@@ -70,13 +91,14 @@ const f = StyleSheet.create({
 });
 
 function statusColor(s: string) {
-  if (s === "Paid") return SUCCESS;
-  if (s === "Pending") return WARNING;
+  if (s === "PAID") return SUCCESS;
+  if (s === "PENDING") return WARNING;
   return DANGER;
 }
 
 export default function NewInvoice() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const paddingTop = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
@@ -85,29 +107,89 @@ export default function NewInvoice() {
   const [selectedTenant,setTenant]       = useState<string | null>(null);
   const [amount,        setAmount]       = useState("");
   const [dueDate,       setDueDate]      = useState("");
-  const [invoiceNum,    setInvoiceNum]   = useState("INV-0043");
+  const [invoiceNum,    setInvoiceNum]   = useState("");
   const [notes,         setNotes]        = useState("");
   const [submitting,    setSubmitting]   = useState(false);
-  const [submitted,     setSubmitted]    = useState(false);
+  const [tenants,       setTenants]      = useState<TenantOption[]>([]);
+  const [invoices,      setInvoices]     = useState<InvoiceRecord[]>([]);
+  const [loading,       setLoading]      = useState(true);
+  const [loadError,     setLoadError]    = useState("");
+  const [submitError,   setSubmitError]  = useState("");
 
   const currentType = INVOICE_TYPES.find(t => t.id === invoiceType)!;
-  const currentTenant = TENANTS.find(t => t.id === selectedTenant);
+  const activeTenants = tenants.filter(t => t.status === "ACTIVE" && t.tenant?._id);
+  const currentTenant = activeTenants.find(t => t.tenant?._id === selectedTenant);
 
-  // Auto-fill amount when tenant and type selected
-  useEffect(() => {
-    if (invoiceType === "rent" && selectedTenant) {
-      const tenant = TENANTS.find(t => t.id === selectedTenant);
-      setAmount(tenant?.rent.replace("₹", "") ?? "");
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const headers = { Authorization: `Bearer ${token}` };
+      const [tenantResponse, invoiceResponse] = await Promise.all([
+        fetch(`${API_URL}/api/landlord/tenants`, { headers }),
+        fetch(`${API_URL}/api/landlord/invoices`, { headers }),
+      ]);
+      const [tenantJson, invoiceJson] = await Promise.all([
+        tenantResponse.json(), invoiceResponse.json(),
+      ]);
+      if (!tenantResponse.ok || !invoiceResponse.ok) {
+        throw new Error(tenantJson?.error?.message ?? invoiceJson?.error?.message ?? "Could not load invoices.");
+      }
+      setTenants(tenantJson?.data ?? []);
+      setInvoices(invoiceJson?.data ?? []);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load invoice data.");
+    } finally {
+      setLoading(false);
     }
-  }, [invoiceType, selectedTenant]);
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void loadData(); });
 
   const handleCreate = async () => {
     if (!selectedTenant || !amount || !dueDate) return;
     setSubmitting(true);
-    await new Promise(r => setTimeout(r, 900));
-    setSubmitted(true);
-    await new Promise(r => setTimeout(r, 600));
-    router.back();
+    setSubmitError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const parsedDueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDate)
+        ? dueDate
+        : (() => {
+            const [day, month, year] = dueDate.split("/").map(Number);
+            return year && month && day
+              ? new Date(year, month - 1, day).toISOString()
+              : "";
+          })();
+      if (!parsedDueDate) throw new Error("Enter a valid due date (DD/MM/YYYY).");
+      const response = await fetch(`${API_URL}/api/landlord/invoices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          tenantId: selectedTenant,
+          invoiceNumber: invoiceNum.trim() || `INV-${Date.now().toString().slice(-8)}`,
+          type: invoiceType,
+          amount: Number(amount),
+          dueDate: parsedDueDate,
+          notes: notes.trim(),
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not create invoice.");
+      await loadData();
+      setView("history");
+      setTenant(null);
+      setAmount("");
+      setDueDate("");
+      setNotes("");
+      setInvoiceNum("");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not create invoice.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -134,9 +216,11 @@ export default function NewInvoice() {
       </Animated.View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { void loadData(); }} tintColor={ACCENT_LIGHT} />}>
 
-          {view === "history" ? (
+            {loadError ? <Text style={{ color: DANGER, textAlign: "center" }}>{loadError}</Text> : null}
+
+            {view === "history" ? (
             <>
               {/* Recent invoices */}
               <FadeIn delay={0}>
@@ -144,19 +228,19 @@ export default function NewInvoice() {
                   <View style={s.cardHeaderRow}>
                     <Text style={s.cardTitle}>Recent Invoices</Text>
                   </View>
-                  {RECENT_INVOICES.length === 0 ? (
+                  {loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : invoices.length === 0 ? (
                     <View style={{ paddingVertical: 16, alignItems: "center" }}>
                       <Text style={{ color: "rgba(255,255,255,0.40)", fontSize: 13 }}>No invoices yet</Text>
                     </View>
-                  ) : RECENT_INVOICES.map((inv, i) => (
-                    <TouchableOpacity key={inv.id} style={[s.invRow, i > 0 && s.borderTop]} activeOpacity={0.7}>
+                  ) : invoices.map((inv, i) => (
+                    <TouchableOpacity key={inv._id} style={[s.invRow, i > 0 && s.borderTop]} activeOpacity={0.7}>
                       <View style={s.invLeft}>
-                        <Text style={s.invId}>{inv.id}</Text>
-                        <Text style={s.invTenant}>{inv.tenant} · {inv.type}</Text>
-                        <Text style={s.invDate}>{inv.date}</Text>
+                        <Text style={s.invId}>{inv.invoiceNumber}</Text>
+                        <Text style={s.invTenant}>{inv.tenant?.fullName ?? "Tenant"} · {inv.type}</Text>
+                        <Text style={s.invDate}>Due {new Date(inv.dueDate).toLocaleDateString("en-IN")}</Text>
                       </View>
                       <View style={s.invRight}>
-                        <Text style={s.invAmount}>{inv.amount}</Text>
+                        <Text style={s.invAmount}>₹{inv.amount.toLocaleString("en-IN")}</Text>
                         <View style={[s.statusBadge, { backgroundColor: `${statusColor(inv.status)}22` }]}>
                           <Text style={[s.statusTxt, { color: statusColor(inv.status) }]}>{inv.status}</Text>
                         </View>
@@ -188,7 +272,10 @@ export default function NewInvoice() {
                   <Text style={s.cardTitle}>Invoice Type</Text>
                   <View style={s.typeGrid}>
                     {INVOICE_TYPES.map((t) => (
-                      <TouchableOpacity key={t.id} onPress={() => setInvoiceType(t.id)} activeOpacity={0.75}
+                      <TouchableOpacity key={t.id} onPress={() => {
+                        setInvoiceType(t.id);
+                        if (t.id === "rent" && currentTenant?.monthlyRent) setAmount(String(currentTenant.monthlyRent));
+                      }} activeOpacity={0.75}
                         style={[s.typeCard, invoiceType === t.id && { borderColor: t.color, backgroundColor: `${t.color}18` }]}>
                         <Text style={s.typeIcon}>{t.icon}</Text>
                         <Text style={[s.typeLabel, invoiceType === t.id && { color: t.color }]}>{t.label}</Text>
@@ -202,19 +289,22 @@ export default function NewInvoice() {
               <FadeIn delay={80}>
                 <View style={s.card}>
                   <Text style={s.cardTitle}>Bill To</Text>
-                  {TENANTS.length === 0 ? (
+                  {loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : activeTenants.length === 0 ? (
                     <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                      <Text style={{ color: "rgba(255,255,255,0.40)", fontSize: 13 }}>No tenants added yet</Text>
+                      <Text style={{ color: "rgba(255,255,255,0.40)", fontSize: 13 }}>No active tenants found</Text>
                     </View>
-                  ) : TENANTS.map((t, i) => (
-                    <TouchableOpacity key={t.id} onPress={() => setTenant(t.id)} activeOpacity={0.75}
-                      style={[s.tenantRow, i > 0 && s.borderTop, selectedTenant === t.id && s.tenantActive]}>
-                      <View style={[s.radio, selectedTenant === t.id && s.radioActive]} />
+                  ) : activeTenants.map((t, i) => (
+                    <TouchableOpacity key={t._id} onPress={() => {
+                      setTenant(t.tenant!._id);
+                      if (invoiceType === "rent") setAmount(t.monthlyRent ? String(t.monthlyRent) : "");
+                    }} activeOpacity={0.75}
+                      style={[s.tenantRow, i > 0 && s.borderTop, selectedTenant === t.tenant?._id && s.tenantActive]}>
+                      <View style={[s.radio, selectedTenant === t.tenant?._id && s.radioActive]} />
                       <View style={{ flex: 1 }}>
-                        <Text style={[s.tenantName, selectedTenant === t.id && { color: WHITE }]}>{t.name}</Text>
-                        <Text style={s.tenantUnit}>{t.unit} · {t.rent}/mo</Text>
+                        <Text style={[s.tenantName, selectedTenant === t.tenant?._id && { color: WHITE }]}>{t.tenant?.fullName ?? `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim()}</Text>
+                        <Text style={s.tenantUnit}>{t.property?.name ?? "Property"} · ₹{(t.monthlyRent ?? 0).toLocaleString("en-IN")}/mo</Text>
                       </View>
-                      {selectedTenant === t.id && (
+                      {selectedTenant === t.tenant?._id && (
                         <View style={s.selectedBadge}><Text style={s.selectedTxt}>✓</Text></View>
                       )}
                     </TouchableOpacity>
@@ -232,10 +322,10 @@ export default function NewInvoice() {
                       <Text style={[s.typeBadgeTxt, { color: currentType.color }]}>{currentType.label}</Text>
                     </View>
                   </View>
-                  <Field label="Invoice Number" placeholder="INV-0043" value={invoiceNum} onChangeText={setInvoiceNum} />
+                  <Field label="Invoice Number" placeholder="Auto-generated if blank" value={invoiceNum} onChangeText={setInvoiceNum} />
                   <View style={s.twoCol}>
-                    <View style={{ flex: 1 }}><Field label="Amount (₹)" placeholder="1,250" value={amount} onChangeText={setAmount} keyboardType="numeric" /></View>
-                    <View style={{ flex: 1 }}><Field label="Due Date" placeholder="01/01/2025" value={dueDate} onChangeText={setDueDate} /></View>
+                    <View style={{ flex: 1 }}><Field label="Amount (₹)" placeholder="0.00" value={amount} onChangeText={setAmount} keyboardType="numeric" /></View>
+                    <View style={{ flex: 1 }}><Field label="Due Date (DD/MM/YYYY)" placeholder="DD/MM/YYYY" value={dueDate} onChangeText={setDueDate} /></View>
                   </View>
                   <Field label="Notes" placeholder="Optional invoice note…" value={notes} onChangeText={setNotes} multiline />
                 </View>
@@ -252,11 +342,11 @@ export default function NewInvoice() {
                     </View>
                     <View style={s.previewRow}>
                       <Text style={s.previewLbl}>Bill To</Text>
-                      <Text style={s.previewVal}>{currentTenant.name}</Text>
+                      <Text style={s.previewVal}>{currentTenant.tenant?.fullName ?? `${currentTenant.firstName ?? ""} ${currentTenant.lastName ?? ""}`.trim()}</Text>
                     </View>
                     <View style={s.previewRow}>
                       <Text style={s.previewLbl}>Unit</Text>
-                      <Text style={s.previewVal}>{currentTenant.unit}</Text>
+                      <Text style={s.previewVal}>{currentTenant.property?.name ?? "Property"}</Text>
                     </View>
                     <View style={s.previewRow}>
                       <Text style={s.previewLbl}>Type</Text>
@@ -276,12 +366,13 @@ export default function NewInvoice() {
 
               <FadeIn delay={270}>
                 <TouchableOpacity
-                  style={[s.createBtn, (!selectedTenant || !amount || !dueDate || submitting || submitted) && { opacity: 0.6 }]}
+                  style={[s.createBtn, (!selectedTenant || !amount || !dueDate || submitting) && { opacity: 0.6 }]}
                   onPress={handleCreate} activeOpacity={0.85}
-                  disabled={!selectedTenant || !amount || !dueDate || submitting || submitted}
+                  disabled={!selectedTenant || !amount || !dueDate || submitting}
                 >
-                  <Text style={s.createTxt}>{submitted ? "Created ✓" : submitting ? "Creating…" : "Create & Send Invoice"}</Text>
+                  <Text style={s.createTxt}>{submitting ? "Creating…" : "Create Invoice"}</Text>
                 </TouchableOpacity>
+                {submitError ? <Text style={{ color: DANGER, textAlign: "center" }}>{submitError}</Text> : null}
               </FadeIn>
             </>
           )}

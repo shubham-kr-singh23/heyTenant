@@ -1,10 +1,13 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, StatusBar,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -36,19 +39,37 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
   return <Animated.View style={useAnimatedStyle(() => ({ opacity: op.value, transform: [{ translateY: ty.value }] }))}>{children}</Animated.View>;
 }
 
-// Lease timeline bar — shown as empty until real lease data is available
-function LeaseTimeline() {
-  const prog = useSharedValue(0);
-  const fillStyle = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` as any, height: 8, backgroundColor: TEAL, borderRadius: 4 }));
+type LeaseInfoData = {
+  leaseStart: string;
+  leaseEnd: string;
+  monthlyRent: number;
+  rentDueDay?: number;
+  notes?: string;
+  property?: {
+    name: string;
+    addressLine1: string;
+    city: string;
+    postcode: string;
+    propertyType: string;
+    bedrooms: number;
+    depositAmount?: number;
+  };
+};
+
+function LeaseTimeline({ lease }: { lease: LeaseInfoData | null }) {
+  const now = Date.now();
+  const start = lease ? new Date(lease.leaseStart).getTime() : 0;
+  const end = lease ? new Date(lease.leaseEnd).getTime() : 0;
+  const progress = end > start ? Math.max(0, Math.min(100, ((now - start) / (end - start)) * 100)) : 0;
   return (
     <View>
       <View style={{ height: 8, backgroundColor: WHITE_08, borderRadius: 4, overflow: "hidden" }}>
-        <Animated.View style={fillStyle} />
+        <View style={{ width: `${progress}%`, height: 8, backgroundColor: TEAL, borderRadius: 4 }} />
       </View>
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
-        <Text style={{ fontSize: 11, color: WHITE_40 }}>--</Text>
-        <Text style={{ fontSize: 11, fontWeight: "700", color: WHITE_40 }}>No data</Text>
-        <Text style={{ fontSize: 11, color: WHITE_40, fontWeight: "700" }}>--</Text>
+        <Text style={{ fontSize: 11, color: WHITE_40 }}>{lease ? new Date(lease.leaseStart).toLocaleDateString("en-IN") : "—"}</Text>
+        <Text style={{ fontSize: 11, fontWeight: "700", color: WHITE_40 }}>{lease ? `${Math.round(progress)}% elapsed` : "No active lease"}</Text>
+        <Text style={{ fontSize: 11, color: WHITE_40, fontWeight: "700" }}>{lease ? new Date(lease.leaseEnd).toLocaleDateString("en-IN") : "—"}</Text>
       </View>
     </View>
   );
@@ -56,8 +77,34 @@ function LeaseTimeline() {
 
 export default function LeaseInfo() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const pt = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
+  const [lease, setLease] = useState<LeaseInfoData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchLease = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) { setError("Not authenticated."); return; }
+      const response = await fetch(`${API_URL}/api/renter/lease`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json().catch(() => null);
+      if (response.status === 404) { setLease(null); return; }
+      if (!response.ok) { setError(json?.error?.message ?? "Failed to load lease details."); return; }
+      setLease(json?.data ?? null);
+    } catch {
+      setError("Network error — is the server running?");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void fetchLease(); });
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
   useEffect(() => { hOp.value = withTiming(1, { duration: 350 }); hTy.value = withTiming(0, { duration: 350, easing: Easing.out(Easing.cubic) }); }, []);
@@ -72,7 +119,14 @@ export default function LeaseInfo() {
         <View style={{ width: 38 }} />
       </Animated.View>
 
-      <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.body}
+        contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { void fetchLease(); }} tintColor={TEAL} />}
+      >
+        {error ? <Text style={{ color: DANGER, textAlign: "center" }}>{error}</Text> : null}
+        {loading && !lease ? <ActivityIndicator color={TEAL} /> : null}
 
 
         {/* Property summary */}
@@ -82,12 +136,14 @@ export default function LeaseInfo() {
             <View style={s.propRow}>
               <View style={s.propIconBox}><Text style={{ fontSize: 28 }}>🏢</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={s.propName}>--</Text>
-                <Text style={s.propAddr}>No property assigned yet</Text>
+                <Text style={s.propName}>{lease?.property?.name ?? "No property assigned"}</Text>
+                <Text style={s.propAddr}>{lease?.property
+                  ? `${lease.property.addressLine1}, ${lease.property.city} ${lease.property.postcode}`
+                  : error || "No active lease is linked to this account."}</Text>
                 <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
-                  <View style={[s.propTag, { backgroundColor: TEAL_BG }]}><Text style={[s.propTagTxt, { color: TEAL }]}>Active Lease</Text></View>
-                  <View style={[s.propTag, { backgroundColor: PURPLE_BG }]}><Text style={[s.propTagTxt, { color: PURPLE }]}>2-Bed</Text></View>
-                  <View style={[s.propTag, { backgroundColor: WHITE_08 }]}><Text style={[s.propTagTxt, { color: WHITE_40 }]}>Floor 2</Text></View>
+                  {lease ? <View style={[s.propTag, { backgroundColor: TEAL_BG }]}><Text style={[s.propTagTxt, { color: TEAL }]}>Active Lease</Text></View> : null}
+                  {lease?.property?.propertyType ? <View style={[s.propTag, { backgroundColor: PURPLE_BG }]}><Text style={[s.propTagTxt, { color: PURPLE }]}>{lease.property.propertyType}</Text></View> : null}
+                  {lease?.property?.bedrooms ? <View style={[s.propTag, { backgroundColor: WHITE_08 }]}><Text style={[s.propTagTxt, { color: WHITE_40 }]}>{lease.property.bedrooms} BHK</Text></View> : null}
                 </View>
               </View>
             </View>
@@ -99,14 +155,18 @@ export default function LeaseInfo() {
           <View style={s.card}>
             <Text style={s.cardTitle}>Lease Period</Text>
             <View style={{ flexDirection: "row", justifyContent: "space-around", marginBottom: 16 }}>
-              {[["Start", "--", WHITE_72], ["End", "--", WHITE_40], ["Type", "--", TEAL]].map(([l, v, c]) => (
+              {[
+                ["Start", lease ? new Date(lease.leaseStart).toLocaleDateString("en-IN") : "—", WHITE_72],
+                ["End", lease ? new Date(lease.leaseEnd).toLocaleDateString("en-IN") : "—", WHITE_40],
+                ["Due day", lease ? `Day ${lease.rentDueDay ?? 1}` : "—", TEAL],
+              ].map(([l, v, c]) => (
                 <View key={l as string} style={{ alignItems: "center", gap: 4 }}>
                   <Text style={{ fontSize: 15, fontWeight: "700", color: c as string }}>{v}</Text>
                   <Text style={{ fontSize: 10, color: WHITE_40 }}>{l}</Text>
                 </View>
               ))}
             </View>
-            <LeaseTimeline />
+            <LeaseTimeline lease={lease} />
           </View>
         </FadeIn>
 
@@ -115,10 +175,8 @@ export default function LeaseInfo() {
           <View style={s.card}>
             <Text style={s.cardTitle}>Financial Terms</Text>
             {[
-              ["Monthly Rent",    "--",  WARNING,      "Payable 1st of each month"],
-              ["Security Deposit","--",  ACCENT_LIGHT, "Protected · MyDeposits scheme"],
-              ["Late Fee",        "--",  DANGER,       "Applies after 7 days overdue"],
-              ["Notice Period",   "--",  TEAL,         "Written notice required"],
+              ["Monthly Rent", lease ? `₹${lease.monthlyRent.toLocaleString("en-IN")}` : "—", WARNING, `Due on day ${lease?.rentDueDay ?? 1} of each month`],
+              ["Security Deposit", lease ? `₹${(lease.property?.depositAmount ?? 0).toLocaleString("en-IN")}` : "—", ACCENT_LIGHT, "Amount recorded on the property"],
             ].map(([l, v, c, sub], i) => (
               <View key={l as string} style={[s.finRow, i > 0 && s.bt]}>
                 <View style={{ flex: 1 }}>
@@ -134,52 +192,17 @@ export default function LeaseInfo() {
         {/* Key clauses */}
         <FadeIn delay={240}>
           <View style={s.card}>
-            <Text style={s.cardTitle}>Key Clauses</Text>
-            {[
-              { icon: "🐾", title: "Pets",          body: "Not permitted without prior written consent from the landlord.",       ok: false },
-              { icon: "🚬", title: "Smoking",        body: "Strictly no smoking anywhere inside the property or communal areas.",  ok: false },
-              { icon: "🛠️", title: "Alterations",   body: "No structural alterations. Minor redecoration requires approval.",     ok: false },
-              { icon: "🏠", title: "Sub-letting",    body: "Subletting or Airbnb use strictly prohibited.",                       ok: false },
-              { icon: "🌱", title: "Garden",         body: "Tenant responsible for maintaining the rear garden to a tidy standard.",ok: true  },
-              { icon: "🔧", title: "Minor Repairs",  body: "Tenant responsible for minor repairs under ₹2,000 (e.g. bulbs, fuses).", ok: true  },
-            ].map((c, i) => (
-              <View key={c.title} style={[s.clauseRow, i > 0 && s.bt]}>
-                <Text style={{ fontSize: 18, flexShrink: 0 }}>{c.icon}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.clauseTitle}>{c.title}</Text>
-                  <Text style={s.clauseBody}>{c.body}</Text>
-                </View>
-              </View>
-            ))}
+            <Text style={s.cardTitle}>Agreement Notes</Text>
+            <Text style={s.clauseBody}>{lease?.notes?.trim() || "No additional lease clauses have been recorded in the app. Check your signed rental agreement for the applicable terms."}</Text>
           </View>
         </FadeIn>
 
-        {/* Responsibilities */}
         <FadeIn delay={300}>
-          <View style={s.twoCol}>
-            <View style={[s.card, s.half, { borderColor: `${SUCCESS}25` }]}>
-              <Text style={[s.cardTitle, { color: SUCCESS, marginBottom: 10 }]}>✓ Tenant</Text>
-              {["Council Tax", "Gas & Electric", "Internet/TV", "Contents Insurance", "Garden upkeep"].map((r, i) => (
-                <View key={r} style={[s.respRow, i > 0 && s.bt]}><View style={[s.respDot, { backgroundColor: SUCCESS }]} /><Text style={s.respTxt}>{r}</Text></View>
-              ))}
-            </View>
-            <View style={[s.card, s.half, { borderColor: `${ACCENT_LIGHT}25` }]}>
-              <Text style={[s.cardTitle, { color: ACCENT_LIGHT, marginBottom: 10 }]}>🏠 Landlord</Text>
-              {["Building Insurance", "Structural repairs", "Boiler service", "Safety certificates", "Major appliances"].map((r, i) => (
-                <View key={r} style={[s.respRow, i > 0 && s.bt]}><View style={[s.respDot, { backgroundColor: ACCENT_LIGHT }]} /><Text style={s.respTxt}>{r}</Text></View>
-              ))}
-            </View>
-          </View>
-        </FadeIn>
-
-        {/* CTA buttons */}
-        <FadeIn delay={360}>
-          <View style={s.ctaRow}>
-            <TouchableOpacity style={[s.ctaBtn, { backgroundColor: TEAL }]} activeOpacity={0.85}>
-              <Text style={s.ctaTxt}>📄 View Agreement</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.ctaBtn, { backgroundColor: WARNING }]} activeOpacity={0.85}>
-              <Text style={s.ctaTxt}>✉️ Renew Lease</Text>
+          <View style={s.card}>
+            <Text style={s.cardTitle}>Indian Tenancy References</Text>
+            <Text style={s.clauseBody}>Tenancy rules can vary by state and Union Territory. These national references are informational; check the applicable local law and your signed agreement.</Text>
+            <TouchableOpacity onPress={() => Linking.openURL("https://mohua.gov.in/upload/uploadfiles/files/Model_Tenancy_Act_2021.pdf")} style={{ paddingTop: 12 }}>
+              <Text style={{ color: ACCENT_LIGHT, fontWeight: "600" }}>Model Tenancy Act, 2021 (MoHUA) ↗</Text>
             </TouchableOpacity>
           </View>
         </FadeIn>

@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -30,24 +33,26 @@ const NOTICE_TYPES = [
   { id: "rent",        label: "Rent Reminder", icon: "💰", color: WARNING,      bg: WARNING_BG           },
   { id: "inspection",  label: "Inspection",    icon: "🔍", color: PURPLE,       bg: `${PURPLE}18`        },
   { id: "maintenance", label: "Maintenance",   icon: "🔧", color: WARNING,      bg: WARNING_BG           },
-  { id: "eviction",    label: "Section 21",    icon: "⚠️", color: DANGER,       bg: DANGER_BG            },
+  { id: "legal",       label: "Legal Notice", icon: "⚠️", color: DANGER,       bg: DANGER_BG            },
   { id: "welcome",     label: "Welcome",       icon: "🏠", color: SUCCESS,      bg: SUCCESS_BG           },
 ];
 
 const RECIPIENTS = [
-  { id: "all",      label: "All Tenants",         count: null },
-  { id: "overdue",  label: "Overdue Rent",         count: null },
-  { id: "expiring", label: "Expiring Leases",      count: null },
+  { id: "all",      label: "All Active Tenants",  count: null },
   { id: "custom",   label: "Select Individually",  count: null },
 ];
 
-const TENANTS: { id: string; name: string; unit: string }[] = [];
+type TenantRecord = {
+  tenant?: { _id: string; fullName?: string };
+  property?: { name?: string };
+  status?: string;
+};
 
 const TEMPLATES: Record<string, { subject: string; body: string }> = {
-  rent:        { subject: "Rent Reminder — January 2025", body: "Dear Tenant,\n\nThis is a friendly reminder that your rent is due on the 1st of this month.\n\nPlease ensure payment is made on time to avoid late charges.\n\nThank you,\nProperty Management" },
-  inspection:  { subject: "Upcoming Property Inspection", body: "Dear Tenant,\n\nWe would like to schedule a routine inspection of your unit on __/__/____.\n\nPlease ensure the property is accessible. Contact us within 48 hours if inconvenient.\n\nKind regards,\nProperty Management" },
-  maintenance: { subject: "Planned Maintenance Notice", body: "Dear Tenant,\n\nMaintenance work is scheduled at your property on __/__/____ between __:__ and __:__.\n\nWe apologise for any inconvenience caused.\n\nKind regards,\nProperty Management" },
-  eviction:    { subject: "Notice to Quit — Section 21", body: "Dear Tenant,\n\nPursuant to Section 21 of the Housing Act 1988, we hereby give notice that possession of the property is required by __/__/____.\n\nYours faithfully,\nProperty Management" },
+  rent:        { subject: "Rent Payment Reminder", body: "Dear Tenant,\n\nThis is a reminder to review the rent amount and due date set out in your rental agreement. Please contact me if you have any questions.\n\nRegards,\nYour Landlord" },
+  inspection:  { subject: "Property Inspection", body: "Dear Tenant,\n\nPlease contact me to coordinate a suitable date and time for a property inspection.\n\nRegards,\nYour Landlord" },
+  maintenance: { subject: "Planned Maintenance Notice", body: "Dear Tenant,\n\nPlease see the maintenance details and timing below. Contact me if you need to discuss access arrangements.\n\nRegards,\nYour Landlord" },
+  legal:       { subject: "Tenancy Notice", body: "Dear Tenant,\n\nPlease review the details in this notice and your rental agreement. Notice periods and requirements depend on applicable Indian law and your state or union territory. Please seek qualified local advice where needed.\n\nRegards,\nYour Landlord" },
   welcome:     { subject: "Welcome to Your New Home!", body: "Dear Tenant,\n\nWe are delighted to welcome you to your new home!\n\nYour tenancy commences __/__/____. Please find attached your tenancy agreement and move-in checklist.\n\nWarm regards,\nProperty Management" },
   general:     { subject: "", body: "" },
 };
@@ -64,6 +69,7 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 
 export default function SendNotice() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const paddingTop = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
@@ -74,6 +80,10 @@ export default function SendNotice() {
   const [body,       setBody]       = useState("");
   const [sending,    setSending]    = useState(false);
   const [sent,       setSent]       = useState(false);
+  const [tenants,    setTenants]    = useState<TenantRecord[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [loadError,  setLoadError]  = useState("");
+  const [sendError,  setSendError]  = useState("");
   const [subFocused, setSubFocused] = useState(false);
   const [bodyFocused,setBodyFocused] = useState(false);
 
@@ -87,13 +97,51 @@ export default function SendNotice() {
   const toggleTenant = (id: string) =>
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
+  const loadTenants = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/tenants`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not load tenants.");
+      setTenants((json?.data ?? []).filter((tenant: TenantRecord) => tenant.status === "ACTIVE" && tenant.tenant?._id));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load tenants.");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void loadTenants(); });
+
   const handleSend = async () => {
-    if (!subject.trim() || !body.trim()) return;
+    const tenantIds = recipient === "all"
+      ? tenants.map((tenant) => tenant.tenant!._id)
+      : selected;
+    if (!tenantIds.length || !subject.trim() || !body.trim()) return;
     setSending(true);
-    await new Promise(r => setTimeout(r, 1000));
-    setSent(true);
-    await new Promise(r => setTimeout(r, 700));
-    router.back();
+    setSendError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/notices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tenantIds, type: noticeType, subject: subject.trim(), body: body.trim() }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not publish notice.");
+      setSent(true);
+      router.back();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not publish notice.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -118,7 +166,8 @@ export default function SendNotice() {
       </Animated.View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { void loadTenants(); }} tintColor={ACCENT_LIGHT} />}>
+          {loadError ? <Text style={{ color: DANGER }}>{loadError}</Text> : null}
 
           {/* Notice type */}
           <FadeIn delay={0}>
@@ -140,7 +189,7 @@ export default function SendNotice() {
           <FadeIn delay={80}>
             <View style={s.card}>
               <Text style={s.cardTitle}>Recipients</Text>
-              {RECIPIENTS.map((r, i) => (
+              {loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : RECIPIENTS.map((r, i) => (
                 <TouchableOpacity key={r.id} onPress={() => setRecipient(r.id)} activeOpacity={0.75}
                   style={[s.recipRow, i > 0 && s.borderTop]}>
                   <View style={[s.radio, recipient === r.id && s.radioActive]} />
@@ -154,18 +203,19 @@ export default function SendNotice() {
               ))}
               {recipient === "custom" && (
                 <View style={{ marginTop: 12 }}>
-                  {TENANTS.map((t, i) => (
-                    <TouchableOpacity key={t.id} onPress={() => toggleTenant(t.id)} activeOpacity={0.75}
-                      style={[s.tenantRow, i > 0 && s.borderTop, selected.includes(t.id) && s.tenantActive]}>
-                      <View style={[s.checkbox, selected.includes(t.id) && s.checkboxActive]}>
-                        {selected.includes(t.id) && <Text style={s.checkMark}>✓</Text>}
+                  {tenants.length === 0 ? <Text style={{ color: WHITE_40 }}>No active tenants available.</Text> : tenants.map((t, i) => {
+                    const id = t.tenant!._id;
+                    return <TouchableOpacity key={id} onPress={() => toggleTenant(id)} activeOpacity={0.75}
+                      style={[s.tenantRow, i > 0 && s.borderTop, selected.includes(id) && s.tenantActive]}>
+                      <View style={[s.checkbox, selected.includes(id) && s.checkboxActive]}>
+                        {selected.includes(id) && <Text style={s.checkMark}>✓</Text>}
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={[s.tenantName, selected.includes(t.id) && { color: WHITE }]}>{t.name}</Text>
-                        <Text style={s.tenantUnit}>{t.unit}</Text>
+                        <Text style={[s.tenantName, selected.includes(id) && { color: WHITE }]}>{t.tenant?.fullName ?? "Tenant"}</Text>
+                        <Text style={s.tenantUnit}>{t.property?.name ?? "Property"}</Text>
                       </View>
-                    </TouchableOpacity>
-                  ))}
+                    </TouchableOpacity>;
+                  })}
                 </View>
               )}
             </View>
@@ -206,7 +256,7 @@ export default function SendNotice() {
                 <Text style={s.previewHeading}>📋 Preview</Text>
                 <Text style={s.previewTo}>
                   To: {RECIPIENTS.find(r => r.id === recipient)?.label}
-                  {recipient === "custom" ? ` (${selected.length} selected)` : ""}
+                  {recipient === "custom" ? ` (${selected.length} selected)` : ` (${tenants.length} active tenants)`}
                 </Text>
                 <Text style={s.previewSubject}>{subject || "(No subject)"}</Text>
                 <Text style={s.previewBody} numberOfLines={4}>{body || "(No body)"}</Text>
@@ -217,12 +267,13 @@ export default function SendNotice() {
           {/* Send */}
           <FadeIn delay={280}>
             <TouchableOpacity
-              style={[s.sendBtn, { backgroundColor: currentType.color }, (sending || sent || !subject.trim() || !body.trim()) && { opacity: 0.6 }]}
+              style={[s.sendBtn, { backgroundColor: currentType.color }, (sending || sent || !subject.trim() || !body.trim() || (recipient === "custom" ? selected.length === 0 : tenants.length === 0)) && { opacity: 0.6 }]}
               onPress={handleSend} activeOpacity={0.85}
-              disabled={sending || sent || !subject.trim() || !body.trim()}
+              disabled={sending || sent || !subject.trim() || !body.trim() || (recipient === "custom" ? selected.length === 0 : tenants.length === 0)}
             >
-              <Text style={s.sendTxt}>{sent ? "Sent ✓" : sending ? "Sending…" : "Send Notice  →"}</Text>
+              <Text style={s.sendTxt}>{sent ? "Published ✓" : sending ? "Publishing…" : "Publish Notice  →"}</Text>
             </TouchableOpacity>
+            {sendError ? <Text style={{ color: DANGER, textAlign: "center" }}>{sendError}</Text> : null}
           </FadeIn>
 
         </ScrollView>

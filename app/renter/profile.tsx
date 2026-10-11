@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, StatusBar, Linking,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { useClerk, useUser } from "@clerk/expo";
+import { useAuth, useClerk, useUser } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -31,23 +33,41 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
+type LeaseRecord = {
+  leaseStart: string;
+  leaseEnd: string;
+  monthlyRent: number;
+  rentDueDay?: number;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  property?: {
+    name: string;
+    addressLine1: string;
+    city: string;
+    postcode: string;
+    depositAmount?: number;
+  };
+  landlord?: { fullName: string; email: string };
+};
 
-const DOCUMENTS = [
-  { id: "1", icon: "\uD83D\uDCC4", label: "Tenancy Agreement",      sub: "Jan 2024",   color: ACCENT_LIGHT },
-  { id: "2", icon: "\uD83E\uDDFE", label: "Nov 2024 Rent Receipt",  sub: "1 Nov 2024", color: SUCCESS      },
-  { id: "3", icon: "\uD83E\uDDFE", label: "Oct 2024 Rent Receipt",  sub: "1 Oct 2024", color: SUCCESS      },
-  { id: "4", icon: "\uD83D\uDD12", label: "Gas Safety Certificate", sub: "Mar 2024",   color: TEAL         },
-  { id: "5", icon: "\uD83C\uDFE0", label: "Move-in Inspection",     sub: "Jan 2024",   color: PURPLE       },
-  { id: "6", icon: "\uD83D\uDCCB", label: "EPC Certificate",        sub: "Rating: C",  color: WARNING      },
-];
+type PaymentRecord = {
+  _id: string;
+  amount: number;
+  status: string;
+  period?: string;
+  reference?: string;
+  paidAt?: string;
+  createdAt: string;
+};
+
+const DOCUMENTS: { id: string; icon: string; label: string; sub: string; color: string }[] = [];
 
 const USEFUL_LINKS = [
-  { id: "1", icon: "\uD83C\uDFE0", label: "Shelter \u2014 Tenant Rights",   url: "https://www.shelter.org.uk" },
-  { id: "2", icon: "\u2696\uFE0F", label: "Citizens Advice \u2014 Renting", url: "https://www.citizensadvice.org.uk/housing/renting-privately" },
-  { id: "3", icon: "\uD83D\uDCB7", label: "Check My Deposit (DPS)",         url: "https://www.depositprotection.com" },
-  { id: "4", icon: "\uD83D\uDD0D", label: "Property Ombudsman",             url: "https://www.tpos.co.uk" },
-  { id: "5", icon: "\u2139\uFE0F", label: "Gov.uk \u2014 Renting a Home",   url: "https://www.gov.uk/private-renting" },
+  { id: "1", icon: "\uD83C\uDFE0", label: "Model Tenancy Act, 2021 (MoHUA)", url: "https://mohua.gov.in/upload/uploadfiles/files/Model_Tenancy_Act_2021.pdf" },
+  { id: "2", icon: "\u2696\uFE0F", label: "Transfer of Property Act, 1882", url: "https://www.indiacode.nic.in/bitstream/123456789/2338/1/A1882-04.pdf" },
+  { id: "3", icon: "\uD83D\uDCDD", label: "Registration Act, 1908", url: "https://www.indiacode.nic.in/handle/123456789/2190" },
+  { id: "4", icon: "\uD83D\uDD0D", label: "National Consumer Helpline", url: "https://consumerhelpline.gov.in/" },
+  { id: "5", icon: "\u2139\uFE0F", label: "Income Tax Department", url: "https://www.incometax.gov.in/" },
 ];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
@@ -107,7 +127,7 @@ const ir = StyleSheet.create({
 });
 
 function PayStatusBadge({ status }: { status: string }) {
-  const color = status === "Paid" ? SUCCESS : status === "Late" ? DANGER : WARNING;
+  const color = status === "PAID" ? SUCCESS : status === "LATE" ? DANGER : WARNING;
   return (
     <View style={[pb.wrap, { backgroundColor: `${color}18`, borderColor: `${color}30` }]}>
       <View style={[pb.dot, { backgroundColor: color }]} />
@@ -130,8 +150,49 @@ function getInitials(name: string): string {
 export default function RenterProfile() {
   const router      = useRouter();
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
   const { user }    = useUser();
   const [signingOut, setSigningOut] = useState(false);
+  const [lease, setLease] = useState<LeaseRecord | null>(null);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState("");
+
+  const fetchProfileData = useCallback(async () => {
+    setDataLoading(true);
+    setDataError("");
+    try {
+      const token = await getToken();
+      if (!token) { setDataError("Not authenticated."); return; }
+      const headers = { Authorization: `Bearer ${token}` };
+      const [leaseResponse, paymentsResponse] = await Promise.all([
+        fetch(`${API_URL}/api/renter/lease`, { headers }),
+        fetch(`${API_URL}/api/renter/payments`, { headers }),
+      ]);
+      const [leaseJson, paymentsJson] = await Promise.all([
+        leaseResponse.json().catch(() => null),
+        paymentsResponse.json().catch(() => null),
+      ]);
+      if (!leaseResponse.ok && leaseResponse.status !== 404) {
+        setDataError(leaseJson?.error?.message ?? "Failed to load tenancy data.");
+        return;
+      }
+      if (!paymentsResponse.ok) {
+        setDataError(paymentsJson?.error?.message ?? "Failed to load payment history.");
+        return;
+      }
+      setLease(leaseResponse.status === 404 ? null : leaseJson?.data ?? null);
+      setPayments(paymentsJson?.data ?? []);
+    } catch {
+      setDataError("Network error — is the server running?");
+    } finally {
+      setDataLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => {
+    void fetchProfileData();
+  });
 
   const displayName  = user?.fullName ?? user?.username ?? "--";
   const initials     = user?.fullName ? getInitials(user.fullName)
@@ -193,9 +254,22 @@ export default function RenterProfile() {
     { id: "documents", label: "Documents" },
   ] as const;
 
-  const paid  = PAYMENT_HISTORY.filter((p) => p.status === "Paid").length;
-  const total = PAYMENT_HISTORY.length;
-  const pct   = Math.round((paid / total) * 100);
+  const paid  = payments.filter((payment) => payment.status === "PAID").length;
+  const late  = payments.filter((payment) => payment.status === "LATE").length;
+  const total = paid + late;
+  const pct   = total ? Math.round((paid / total) * 100) : 0;
+  const today = new Date();
+  const leaseMonths = lease?.leaseStart
+    ? Math.max(0, (today.getFullYear() - new Date(lease.leaseStart).getFullYear()) * 12
+      + today.getMonth() - new Date(lease.leaseStart).getMonth())
+    : null;
+  const rentDueDate = lease ? new Date(today.getFullYear(), today.getMonth(), lease.rentDueDay ?? 1) : null;
+  const paidThisMonth = payments
+    .filter((payment) => payment.status === "PAID" && new Date(payment.paidAt ?? payment.createdAt).getMonth() === today.getMonth()
+      && new Date(payment.paidAt ?? payment.createdAt).getFullYear() === today.getFullYear())
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const nextPaymentAmount = Math.max((lease?.monthlyRent ?? 0) - paidThisMonth, 0);
+  if (rentDueDate && rentDueDate < today && nextPaymentAmount === 0) rentDueDate.setMonth(rentDueDate.getMonth() + 1);
 
   return (
     <View style={s.root}>
@@ -228,6 +302,7 @@ export default function RenterProfile() {
         style={s.scroll}
         contentContainerStyle={[s.scrollContent, { paddingBottom: Math.max(insets.bottom + 32, 48) }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={dataLoading} onRefresh={() => { void fetchProfileData(); }} tintColor={TEAL} />}
       >
         {/* HERO */}
         <FadeIn delay={0}>
@@ -240,7 +315,7 @@ export default function RenterProfile() {
             <View style={s.heroBadgeRow}>
               <View style={s.tenantBadge}>
                 <Text style={s.tenantBadgeIcon}>{"\uD83C\uDFE0"}</Text>
-                <Text style={s.tenantBadgeTxt}>Verified Tenant</Text>
+                <Text style={s.tenantBadgeTxt}>Renter Account</Text>
               </View>
               <View style={s.memberBadge}>
                 <Text style={s.memberBadgeTxt}>Since {memberSince}</Text>
@@ -248,22 +323,22 @@ export default function RenterProfile() {
             </View>
             <View style={s.heroStrip}>
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
-                <Text style={s.heroStatLbl}>Rating</Text>
+                <Text style={s.heroStatVal}>{payments.length}</Text>
+                <Text style={s.heroStatLbl}>Payments</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>{total > 0 ? `${pct}%` : "--"}</Text>
-                <Text style={s.heroStatLbl}>On-time Pay</Text>
+                <Text style={s.heroStatVal}>{total ? `${pct}%` : "—"}</Text>
+                <Text style={s.heroStatLbl}>Paid</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>{dataLoading && !lease ? "…" : dataError && !lease ? "—" : leaseMonths ?? "—"}</Text>
                 <Text style={s.heroStatLbl}>Months</Text>
               </View>
               <View style={s.heroDiv} />
               <View style={s.heroStat}>
-                <Text style={s.heroStatVal}>--</Text>
+                <Text style={s.heroStatVal}>{rentDueDate?.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) ?? "—"}</Text>
                 <Text style={s.heroStatLbl}>Rent Due</Text>
               </View>
             </View>
@@ -298,17 +373,19 @@ export default function RenterProfile() {
               <View style={s.rentGlance}>
                 <View style={s.glanceLeft}>
                   <Text style={s.glanceLbl}>NEXT PAYMENT</Text>
-                  <Text style={s.glanceAmount}>--</Text>
+                  <Text style={s.glanceAmount}>{lease ? `₹${nextPaymentAmount.toLocaleString("en-IN")}` : "—"}</Text>
                   <View style={[s.glancePill, { backgroundColor: WARNING_BG }]}>
-                    <Text style={[s.glancePillTxt, { color: WARNING }]}>Not set up yet</Text>
+                    <Text style={[s.glancePillTxt, { color: WARNING }]}>
+                      {dataError || (lease ? `Due ${rentDueDate?.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}` : "No active lease")}
+                    </Text>
                   </View>
                 </View>
                 <View style={s.glanceDivider} />
                 <View style={s.glanceRight}>
                   <Text style={s.glanceLbl}>DEPOSIT HELD</Text>
-                  <Text style={s.glanceAmount}>--</Text>
+                  <Text style={s.glanceAmount}>{lease ? `₹${(lease.property?.depositAmount ?? 0).toLocaleString("en-IN")}` : "—"}</Text>
                   <View style={[s.glancePill, { backgroundColor: TEAL_BG }]}>
-                    <Text style={[s.glancePillTxt, { color: TEAL }]}>Not set up yet</Text>
+                    <Text style={[s.glancePillTxt, { color: TEAL }]}>{lease ? "Lease deposit" : "No active lease"}</Text>
                   </View>
                 </View>
               </View>
@@ -317,9 +394,11 @@ export default function RenterProfile() {
             <FadeIn delay={180}>
               <View style={s.card}>
                 <SectionHeader title="Emergency Contact" />
-                <View style={{ paddingVertical: 12, alignItems: "center" }}>
-                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No emergency contact added yet</Text>
-                </View>
+                {lease?.emergencyContactName
+                  ? <InfoRow icon={"\uD83D\uDC64"} label={lease.emergencyContactName} value={lease.emergencyContactPhone ?? "Phone not provided"} />
+                  : <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                    <Text style={{ color: WHITE_40, fontSize: 13 }}>No emergency contact added yet</Text>
+                  </View>}
               </View>
             </FadeIn>
 
@@ -345,11 +424,13 @@ export default function RenterProfile() {
               <View style={s.leaseBanner}>
                 <View style={s.leaseBannerLeft}>
                   <Text style={s.leaseBannerLabel}>ACTIVE TENANCY</Text>
-                  <Text style={s.leaseBannerProp}>--</Text>
-                  <Text style={s.leaseBannerAddr}>--</Text>
+                  <Text style={s.leaseBannerProp}>{lease?.property?.name ?? (dataError || "No active lease")}</Text>
+                  <Text style={s.leaseBannerAddr}>{lease?.property
+                    ? `${lease.property.addressLine1}, ${lease.property.city} ${lease.property.postcode}`
+                    : "Property details unavailable"}</Text>
                   <View style={s.leaseBannerTags}>
                     <View style={[s.leaseBannerTag, { backgroundColor: TEAL_BG }]}>
-                      <Text style={[s.leaseBannerTagTxt, { color: TEAL }]}>--</Text>
+                      <Text style={[s.leaseBannerTagTxt, { color: TEAL }]}>{lease ? "Active lease" : "Not leased"}</Text>
                     </View>
                   </View>
                 </View>
@@ -363,59 +444,70 @@ export default function RenterProfile() {
                 <View style={s.leaseTermRow}>
                   <View style={s.leaseTermStat}>
                     <Text style={s.leaseTermLbl}>Start Date</Text>
-                    <Text style={s.leaseTermVal}>--</Text>
+                    <Text style={s.leaseTermVal}>{lease ? new Date(lease.leaseStart).toLocaleDateString("en-IN") : "—"}</Text>
                   </View>
                   <Text style={s.leaseTermArrow}>{"\u2192"}</Text>
                   <View style={s.leaseTermStat}>
                     <Text style={s.leaseTermLbl}>End Date</Text>
-                    <Text style={[s.leaseTermVal, { color: WARNING }]}>--</Text>
+                    <Text style={[s.leaseTermVal, { color: WARNING }]}>{lease ? new Date(lease.leaseEnd).toLocaleDateString("en-IN") : "—"}</Text>
                   </View>
                 </View>
                 <View style={s.leaseProgressTrack}>
-                  <View style={[s.leaseProgressFill, { width: "0%" }]} />
+                  <View style={[s.leaseProgressFill, {
+                    width: lease ? `${Math.max(0, Math.min(100, Math.round(
+                      ((today.getTime() - new Date(lease.leaseStart).getTime())
+                        / (new Date(lease.leaseEnd).getTime() - new Date(lease.leaseStart).getTime())) * 100
+                    )))}%` : "0%",
+                  }]} />
                 </View>
-                <Text style={s.leaseProgressLbl}>No lease data available yet</Text>
+                <Text style={s.leaseProgressLbl}>{lease
+                  ? `${leaseMonths ?? 0} months into lease`
+                  : dataError || "No active lease data available"}</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={120}>
               <View style={s.card}>
                 <SectionHeader title="Financial Details" />
-                <InfoRow icon={"\uD83D\uDCB0"} label="Monthly Rent" value="--" />
-                <InfoRow icon={"\uD83C\uDFE6"} label="Deposit Held" value="--" />
-                <InfoRow icon={"\uD83D\uDD10"} label="Deposit Ref"  value="--" last />
+                <InfoRow icon={"\uD83D\uDCB0"} label="Monthly Rent" value={lease ? `₹${lease.monthlyRent.toLocaleString("en-IN")}` : dataError || "No active lease"} />
+                <InfoRow icon={"\uD83C\uDFE6"} label="Deposit Amount" value={lease ? `₹${(lease.property?.depositAmount ?? 0).toLocaleString("en-IN")}` : "—"} last />
               </View>
             </FadeIn>
 
             <FadeIn delay={180}>
               <View style={s.card}>
                 <SectionHeader title="Landlord & Agent" />
-                <View style={{ paddingVertical: 12, alignItems: "center" }}>
-                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No landlord assigned yet</Text>
-                </View>
+                {lease?.landlord
+                  ? <>
+                    <InfoRow icon={"\uD83D\uDC64"} label="Landlord" value={lease.landlord.fullName} />
+                    <InfoRow icon={"\u2709\uFE0F"} label="Email" value={lease.landlord.email} onPress={() => Linking.openURL(`mailto:${lease.landlord!.email}`)} last />
+                  </>
+                  : <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                    <Text style={{ color: WHITE_40, fontSize: 13 }}>{dataError || "No landlord assigned to this lease."}</Text>
+                  </View>}
               </View>
             </FadeIn>
 
             <FadeIn delay={240}>
               <View style={s.card}>
-                <SectionHeader title="Payment History" sub={total > 0 ? `${paid}/${total} on time` : "--"} />
+                <SectionHeader title="Payment History" sub={total > 0 ? `${paid}/${total} paid` : "No payments"} />
                 {total > 0 ? (
                   <>
                     <View style={s.scoreBar}>
                       <View style={[s.scoreBarFill, { width: `${pct}%` }]} />
                     </View>
-                    <Text style={s.scoreBarLbl}>{pct}% on-time payment rate</Text>
-                    {PAYMENT_HISTORY.map((pay, i) => (
-                      <View key={pay.id} style={[s.payRow, i > 0 && s.payBorder]}>
-                        <View style={[s.payIconWrap, { backgroundColor: pay.status === "Paid" ? SUCCESS_BG : DANGER_BG }]}>
-                          <Text style={s.payIcon}>{pay.status === "Paid" ? "\uD83D\uDCB3" : "\u23F0"}</Text>
+                    <Text style={s.scoreBarLbl}>{pct}% of completed payments marked paid</Text>
+                    {payments.map((pay, i) => (
+                      <View key={pay._id} style={[s.payRow, i > 0 && s.payBorder]}>
+                        <View style={[s.payIconWrap, { backgroundColor: pay.status === "PAID" ? SUCCESS_BG : pay.status === "LATE" ? DANGER_BG : WARNING_BG }]}>
+                          <Text style={s.payIcon}>{pay.status === "PAID" ? "\uD83D\uDCB3" : "\u23F0"}</Text>
                         </View>
                         <View style={s.payBody}>
-                          <Text style={s.payMonth}>{pay.month}</Text>
-                          <Text style={s.payDate}>{pay.date}</Text>
+                          <Text style={s.payMonth}>{pay.period ?? new Date(pay.createdAt).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
+                          <Text style={s.payDate}>{pay.reference ?? new Date(pay.paidAt ?? pay.createdAt).toLocaleDateString("en-IN")}</Text>
                         </View>
                         <View style={s.payRight}>
-                          <Text style={s.payAmount}>{pay.amount}</Text>
+                          <Text style={s.payAmount}>₹{pay.amount.toLocaleString("en-IN")}</Text>
                           <PayStatusBadge status={pay.status} />
                         </View>
                       </View>
@@ -437,13 +529,17 @@ export default function RenterProfile() {
             <FadeIn delay={0}>
               <View style={s.docNotice}>
                 <Text style={s.docNoticeIcon}>{"\uD83D\uDD12"}</Text>
-                <Text style={s.docNoticeTxt}>Your documents are end-to-end encrypted. Only you and your landlord can access them.</Text>
+                <Text style={s.docNoticeTxt}>Documents will appear here when they are uploaded for your tenancy.</Text>
               </View>
             </FadeIn>
             <FadeIn delay={60}>
               <View style={s.card}>
                 <SectionHeader title="My Documents" sub={`${DOCUMENTS.length} files`} />
-                {DOCUMENTS.map((doc, i) => (
+                {DOCUMENTS.length === 0
+                  ? <Text style={{ color: WHITE_40, textAlign: "center", paddingVertical: 16 }}>
+                    No documents have been uploaded for this account.
+                  </Text>
+                  : DOCUMENTS.map((doc, i) => (
                   <TouchableOpacity key={doc.id} style={[s.docItem, i < DOCUMENTS.length - 1 && s.docBorder]} activeOpacity={0.75}>
                     <View style={[s.docIconWrap, { backgroundColor: `${doc.color}15` }]}>
                       <Text style={s.docIcon}>{doc.icon}</Text>
@@ -458,12 +554,6 @@ export default function RenterProfile() {
                   </TouchableOpacity>
                 ))}
               </View>
-            </FadeIn>
-            <FadeIn delay={120}>
-              <TouchableOpacity style={s.uploadBtn} activeOpacity={0.8}>
-                <Text style={s.uploadIcon}>{"\u2B06"}</Text>
-                <Text style={s.uploadTxt}>Upload Document</Text>
-              </TouchableOpacity>
             </FadeIn>
           </>
         )}
@@ -609,4 +699,3 @@ const s = StyleSheet.create({
   signOutDisabled: { opacity: 0.5 },
   signOutTxt:      { fontSize: 14, fontWeight: "600", color: "#F87171" },
 });
-

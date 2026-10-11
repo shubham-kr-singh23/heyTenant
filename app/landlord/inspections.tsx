@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl,
   TextInput, Platform, StatusBar, KeyboardAvoidingView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -30,8 +33,18 @@ const WHITE_05     = "rgba(255,255,255,0.05)";
 const INSPECTION_TABS = ["Scheduled", "In Progress", "Completed"] as const;
 type InspTab = typeof INSPECTION_TABS[number];
 
-const PROPERTIES: { id: string; name: string; tenant: string; lastInspected: string }[] = [];
-const INSPECTIONS: { id: string; property: string; tenant: string; date: string; time: string; inspector: string; status: string; type: string; result: string | null }[] = [];
+type PropertyOption = { _id: string; name: string; status: string };
+type InspectionRecord = {
+  _id: string;
+  property: { _id?: string; name?: string; addressLine1?: string; city?: string } | string;
+  lease?: { firstName?: string; lastName?: string } | string | null;
+  scheduledAt: string;
+  inspector?: string;
+  status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED";
+  type: string;
+  result: string | null;
+  checklistCompleted?: string[];
+};
 
 const CHECKLIST_CATEGORIES = [
   { name: "General Condition",  items: ["Walls & ceilings intact", "Floors undamaged", "Windows functional", "Doors & locks working"] },
@@ -73,8 +86,8 @@ const f = StyleSheet.create({
 });
 
 function statusColor(s: string) {
-  if (s === "Scheduled")   return ACCENT_LIGHT;
-  if (s === "In Progress") return WARNING;
+  if (s === "Scheduled" || s === "SCHEDULED") return ACCENT_LIGHT;
+  if (s === "In Progress" || s === "IN_PROGRESS") return WARNING;
   return SUCCESS;
 }
 function resultColor(r: string | null) {
@@ -85,6 +98,7 @@ function resultColor(r: string | null) {
 
 export default function Inspections() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const paddingTop = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
@@ -97,13 +111,125 @@ export default function Inspections() {
   const [inspector,      setInspector]     = useState("");
   const [checklistOpen,  setChecklistOpen] = useState<string | null>(null);
   const [checked,        setChecked]       = useState<string[]>([]);
+  const [properties,     setProperties]    = useState<PropertyOption[]>([]);
+  const [inspections,    setInspections]   = useState<InspectionRecord[]>([]);
+  const [loading,        setLoading]       = useState(true);
+  const [loadError,      setLoadError]     = useState("");
+  const [actionError,    setActionError]   = useState("");
+  const [saving,         setSaving]        = useState(false);
 
-  const filteredInspections = INSPECTIONS.filter(i => i.status === activeTab);
+  const statusForTab = (tab: InspTab) => tab === "Scheduled" ? "SCHEDULED" : tab === "In Progress" ? "IN_PROGRESS" : "COMPLETED";
+  const filteredInspections = inspections.filter(i => i.status === statusForTab(activeTab));
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not load inspection data.");
+      setProperties(json?.data?.properties ?? []);
+      const inspectionResponse = await fetch(`${API_URL}/api/landlord/inspections`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const inspectionJson = await inspectionResponse.json();
+      if (!inspectionResponse.ok) throw new Error(inspectionJson?.error?.message ?? "Could not load inspections.");
+      setInspections(inspectionJson?.data ?? []);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load inspection data.");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void loadData(); });
 
   const toggleCheck = (item: string) =>
     setChecked(prev => prev.includes(item) ? prev.filter(x => x !== item) : [...prev, item]);
 
   const totalItems = CHECKLIST_CATEGORIES.reduce((a, c) => a + c.items.length, 0);
+
+  const scheduleInspection = async () => {
+    if (!selectedProp || !date.trim() || !time.trim()) return;
+    setSaving(true);
+    setActionError("");
+    try {
+      const [day, month, year] = date.split("/").map(Number);
+      const match = time.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      if (!day || !month || !year || !match) throw new Error("Enter date as DD/MM/YYYY and time as HH:MM AM/PM.");
+      let hours = Number(match[1]);
+      if (match[3]?.toUpperCase() === "PM" && hours < 12) hours += 12;
+      if (match[3]?.toUpperCase() === "AM" && hours === 12) hours = 0;
+      const scheduledAt = new Date(year, month - 1, day, hours, Number(match[2]));
+      if (Number.isNaN(scheduledAt.getTime())) throw new Error("Enter a valid inspection date and time.");
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/inspections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ propertyId: selectedProp, type: inspType, scheduledAt: scheduledAt.toISOString(), inspector }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not schedule inspection.");
+      setShowSchedule(false);
+      setDate("");
+      setTime("");
+      setInspector("");
+      await loadData();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not schedule inspection.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const completeInspection = async () => {
+    if (!checklistOpen || checked.length < totalItems) return;
+    setSaving(true);
+    setActionError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/inspections/${checklistOpen}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: "COMPLETED", checklistCompleted: checked }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not update inspection.");
+      setChecklistOpen(null);
+      await loadData();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not update inspection.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startInspection = async (inspectionId: string) => {
+    setSaving(true);
+    setActionError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/landlord/inspections/${inspectionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: "IN_PROGRESS" }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not start inspection.");
+      await loadData();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not start inspection.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
   useEffect(() => {
@@ -131,10 +257,10 @@ export default function Inspections() {
       {/* KPI strip */}
       <Animated.View style={[s.kpiStrip, hStyle]}>
         {[
-          { label: "Scheduled",    count: INSPECTIONS.filter(i => i.status === "Scheduled").length,   color: ACCENT_LIGHT },
-          { label: "In Progress",  count: INSPECTIONS.filter(i => i.status === "In Progress").length,  color: WARNING      },
-          { label: "Completed",    count: INSPECTIONS.filter(i => i.status === "Completed").length,    color: SUCCESS      },
-          { label: "Overdue",      count: 1, color: DANGER },
+          { label: "Scheduled",    count: inspections.filter(i => i.status === "SCHEDULED").length,   color: ACCENT_LIGHT },
+          { label: "In Progress",  count: inspections.filter(i => i.status === "IN_PROGRESS").length,  color: WARNING      },
+          { label: "Completed",    count: inspections.filter(i => i.status === "COMPLETED").length,    color: SUCCESS      },
+          { label: "Overdue",      count: inspections.filter(i => i.status !== "COMPLETED" && new Date(i.scheduledAt) < new Date()).length, color: DANGER },
         ].map((k) => (
           <View key={k.label} style={s.kpiStripItem}>
             <Text style={[s.kpiStripVal, { color: k.color }]}>{k.count}</Text>
@@ -151,7 +277,7 @@ export default function Inspections() {
               <Text style={[s.tabTxt, activeTab === t && s.tabTxtActive]}>{t}</Text>
               <View style={[s.tabCount, activeTab === t && s.tabCountActive]}>
                 <Text style={[s.tabCountTxt, activeTab === t && { color: WHITE }]}>
-                  {INSPECTIONS.filter(i => i.status === t).length}
+                  {inspections.filter(i => i.status === statusForTab(t)).length}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -160,7 +286,8 @@ export default function Inspections() {
       </Animated.View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]} showsVerticalScrollIndicator={false}>
+        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { void loadData(); }} tintColor={ACCENT_LIGHT} />}>
+          {loadError || actionError ? <Text style={{ color: DANGER }}>{loadError || actionError}</Text> : null}
 
           {/* Schedule new inspection CTA */}
           <FadeIn delay={0}>
@@ -188,39 +315,40 @@ export default function Inspections() {
 
                 {/* Property */}
                 <Text style={[f.label, { marginTop: 12 }]}>Property</Text>
-                {PROPERTIES.map((p, i) => (
-                  <TouchableOpacity key={p.id} onPress={() => setSelectedProp(p.id)} activeOpacity={0.75}
-                    style={[s.propRow, i > 0 && s.borderTop, selectedProp === p.id && s.propRowActive]}>
-                    <View style={[s.radio, selectedProp === p.id && s.radioActive]} />
+                {properties.map((p, i) => (
+                  <TouchableOpacity key={p._id} onPress={() => setSelectedProp(p._id)} activeOpacity={0.75}
+                    style={[s.propRow, i > 0 && s.borderTop, selectedProp === p._id && s.propRowActive]}>
+                    <View style={[s.radio, selectedProp === p._id && s.radioActive]} />
                     <View style={{ flex: 1 }}>
-                      <Text style={[s.propName, selectedProp === p.id && { color: WHITE }]}>{p.name}</Text>
-                      <Text style={s.propSub}>{p.tenant} · Last: {p.lastInspected}</Text>
+                      <Text style={[s.propName, selectedProp === p._id && { color: WHITE }]}>{p.name}</Text>
+                      <Text style={s.propSub}>{p.status === "OCCUPIED" ? "Occupied" : "Vacant"}</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
+                {properties.length === 0 && <Text style={{ color: WHITE_40 }}>No properties available.</Text>}
 
                 {/* Date / time / inspector */}
                 <View style={{ marginTop: 12 }}>
                   <View style={s.twoCol}>
-                    <View style={{ flex: 1 }}><Field label="Date" placeholder="22/12/2024" value={date} onChangeText={setDate} /></View>
+                    <View style={{ flex: 1 }}><Field label="Date (DD/MM/YYYY)" placeholder="22/12/2026" value={date} onChangeText={setDate} /></View>
                     <View style={{ flex: 1 }}><Field label="Time" placeholder="10:00 AM" value={time} onChangeText={setTime} /></View>
                   </View>
                   <Field label="Inspector Name" placeholder="Mike Ross" value={inspector} onChangeText={setInspector} />
                 </View>
 
                 <TouchableOpacity
-                  style={[s.confirmBtn, (!selectedProp || !date || !time) && { opacity: 0.5 }]}
-                  onPress={() => setShowSchedule(false)} activeOpacity={0.85}
-                  disabled={!selectedProp || !date || !time}
+                  style={[s.confirmBtn, (!selectedProp || !date || !time || saving) && { opacity: 0.5 }]}
+                  onPress={() => { void scheduleInspection(); }} activeOpacity={0.85}
+                  disabled={!selectedProp || !date || !time || saving}
                 >
-                  <Text style={s.confirmTxt}>Confirm Inspection</Text>
+                  <Text style={s.confirmTxt}>{saving ? "Saving…" : "Confirm Inspection"}</Text>
                 </TouchableOpacity>
               </View>
             </FadeIn>
           )}
 
           {/* Inspection list */}
-          {filteredInspections.length === 0 ? (
+          {loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : filteredInspections.length === 0 ? (
             <FadeIn delay={80}>
               <View style={[s.card, { alignItems: "center", paddingVertical: 32 }]}>
                 <Text style={{ fontSize: 32, marginBottom: 12 }}>🔍</Text>
@@ -231,10 +359,10 @@ export default function Inspections() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 {filteredInspections.map((insp, i) => (
-                  <View key={insp.id} style={[s.inspItem, i > 0 && s.borderTop]}>
+                  <View key={insp._id} style={[s.inspItem, i > 0 && s.borderTop]}>
                     <View style={s.inspTop}>
                       <View style={[s.typePill, { backgroundColor: `${statusColor(insp.status)}18` }]}>
-                        <Text style={[s.typePillTxt, { color: statusColor(insp.status) }]}>{insp.type}</Text>
+                        <Text style={[s.typePillTxt, { color: statusColor(insp.status) }]}>{insp.type} · {insp.status.replace("_", " ")}</Text>
                       </View>
                       {insp.result && (
                         <View style={[s.resultBadge, { backgroundColor: `${resultColor(insp.result)}20` }]}>
@@ -242,14 +370,19 @@ export default function Inspections() {
                         </View>
                       )}
                     </View>
-                    <Text style={s.inspProp}>{insp.property}</Text>
-                    <Text style={s.inspTenant}>{insp.tenant}</Text>
+                    <Text style={s.inspProp}>{typeof insp.property === "object" ? insp.property?.name ?? "Property" : "Property"}</Text>
+                    {insp.lease && typeof insp.lease === "object" ? <Text style={s.inspTenant}>{insp.lease.firstName} {insp.lease.lastName}</Text> : null}
                     <View style={s.inspMeta}>
-                      <Text style={s.inspMetaTxt}>📅 {insp.date} · {insp.time}</Text>
-                      <Text style={s.inspMetaTxt}>👤 {insp.inspector}</Text>
+                      <Text style={s.inspMetaTxt}>📅 {new Date(insp.scheduledAt).toLocaleString("en-IN")}</Text>
+                      {insp.inspector ? <Text style={s.inspMetaTxt}>👤 {insp.inspector}</Text> : null}
                     </View>
-                    {insp.status === "In Progress" && (
-                      <TouchableOpacity style={s.startChecklistBtn} onPress={() => setChecklistOpen(insp.id)} activeOpacity={0.8}>
+                    {insp.status === "SCHEDULED" && (
+                      <TouchableOpacity style={s.startChecklistBtn} onPress={() => { void startInspection(insp._id); }} activeOpacity={0.8} disabled={saving}>
+                        <Text style={s.startChecklistTxt}>{saving ? "Updating…" : "Start Inspection"}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {insp.status === "IN_PROGRESS" && (
+                      <TouchableOpacity style={s.startChecklistBtn} onPress={() => { setChecklistOpen(insp._id); setChecked(insp.checklistCompleted ?? []); }} activeOpacity={0.8}>
                         <Text style={s.startChecklistTxt}>Start Checklist</Text>
                       </TouchableOpacity>
                     )}
@@ -290,9 +423,9 @@ export default function Inspections() {
                 ))}
 
                 <TouchableOpacity style={[s.completeBtn, checked.length < totalItems && { opacity: 0.5 }]}
-                  onPress={() => setChecklistOpen(null)} activeOpacity={0.85} disabled={checked.length < totalItems}>
+                  onPress={() => { void completeInspection(); }} activeOpacity={0.85} disabled={checked.length < totalItems || saving}>
                   <Text style={s.completeTxt}>
-                    {checked.length < totalItems ? `${totalItems - checked.length} items remaining` : "Mark Complete  ✓"}
+                    {checked.length < totalItems ? `${totalItems - checked.length} items remaining` : saving ? "Saving…" : "Mark Complete  ✓"}
                   </Text>
                 </TouchableOpacity>
               </View>

@@ -7,9 +7,9 @@ import {
   ScrollView,
   Platform,
   StatusBar,
-  useWindowDimensions,
   ActivityIndicator,
   Modal,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -22,6 +22,8 @@ import Animated, {
 import { useRouter } from "expo-router";
 import { useUser, useAuth, useClerk } from "@clerk/expo";
 import { API_URL } from "../../constants/api";
+import type { LandlordDashboardData } from "../../types/landlordDashboard";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BRAND_BLUE = "#1A3C5E";
@@ -46,27 +48,11 @@ const WHITE_05 = "rgba(255,255,255,0.05)";
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 const QUICK_STATS = [
-  { label: "Properties", value: "--", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
-  { label: "Tenants", value: "--", icon: "\uD83D\uDC65", color: SUCCESS, bg: SUCCESS_BG },
-  { label: "Maintenance", value: "--", icon: "\uD83D\uDD27", color: WARNING, bg: WARNING_BG },
-  { label: "Vacancies", value: "--", icon: "\uD83D\uDEAA", color: DANGER, bg: DANGER_BG },
+  { label: "Properties", icon: "\uD83C\uDFE2", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Tenants", icon: "\uD83D\uDC65", color: SUCCESS, bg: SUCCESS_BG },
+  { label: "Maintenance", icon: "\uD83D\uDD27", color: WARNING, bg: WARNING_BG },
+  { label: "Vacancies", icon: "\uD83D\uDEAA", color: DANGER, bg: DANGER_BG },
 ];
-
-const RECENT_ACTIVITIES: { id: string; icon: string; title: string; desc: string; time: string; color: string }[] = [];
-const MAINTENANCE_ITEMS: { id: string; unit: string; issue: string; priority: string; status: string; days: number }[] = [];
-const UPCOMING_EVENTS: { id: string; title: string; date: string; color: string }[] = [];
-
-const OCCUPANCY_DATA = [
-  { month: "Jul", rate: 0 },
-  { month: "Aug", rate: 0 },
-  { month: "Sep", rate: 0 },
-  { month: "Oct", rate: 0 },
-  { month: "Nov", rate: 0 },
-  { month: "Dec", rate: 0 },
-];
-
-const REVENUE_DATA = [0, 0, 0, 0, 0, 0];
-const REVENUE_MONTHS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function priorityColor(p: string) {
   if (p === "High") return DANGER;
@@ -109,114 +95,47 @@ const sh = StyleSheet.create({
 });
 
 // ─── Occupancy bar chart ──────────────────────────────────────────────────────
-function OccupancyChart() {
-  const maxH = 80;
-  const a0 = useSharedValue(0); const a1 = useSharedValue(0); const a2 = useSharedValue(0);
-  const a3 = useSharedValue(0); const a4 = useSharedValue(0); const a5 = useSharedValue(0);
-  const avs = [a0, a1, a2, a3, a4, a5];
-  useEffect(() => {
-    OCCUPANCY_DATA.forEach((d, i) => {
-      avs[i].value = withDelay(300 + i * 80, withTiming(d.rate / 100, { duration: 600, easing: Easing.out(Easing.cubic) }));
-    });
-  }, []);
-  const bs0 = useAnimatedStyle(() => ({ height: a0.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs1 = useAnimatedStyle(() => ({ height: a1.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs2 = useAnimatedStyle(() => ({ height: a2.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs3 = useAnimatedStyle(() => ({ height: a3.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs4 = useAnimatedStyle(() => ({ height: a4.value * maxH, backgroundColor: ACCENT_LIGHT, borderRadius: 5, flex: 1 }));
-  const bs5 = useAnimatedStyle(() => ({ height: a5.value * maxH, backgroundColor: WHITE_40, borderRadius: 5, flex: 1 }));
-  const barStyles = [bs0, bs1, bs2, bs3, bs4, bs5];
-  return (
-    <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, height: maxH + 32 }}>
-      {OCCUPANCY_DATA.map((d, i) => (
-        <View key={d.month} style={{ alignItems: "center", flex: 1 }}>
-          <Text style={{ fontSize: 9, color: WHITE_72, marginBottom: 3 }}>{d.rate}%</Text>
-          <Animated.View style={barStyles[i]} />
-          <Text style={{ fontSize: 9, color: WHITE_40, marginTop: 4 }}>{d.month}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
+function OccupancyChart({
+  totalRooms,
+  occupiedRooms,
+}: {
+  totalRooms: number;
+  occupiedRooms: number;
+}) {
+  const vacantRooms = totalRooms - occupiedRooms;
+  const occupiedPercentage = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+  const vacantPercentage = totalRooms > 0 ? 100 - occupiedPercentage : 0;
 
-// ─── Revenue sparkline ────────────────────────────────────────────────────────
-function RevenueSparkline() {
-  const { width } = useWindowDimensions();
-  const cardW = (width - 32 - 12) / 2 - 32;
-  const chartH = 56;
-  const minVal = Math.min(...REVENUE_DATA);
-  const maxVal = Math.max(...REVENUE_DATA);
-  const range = maxVal - minVal || 1;
-  const pts = REVENUE_DATA.map((v, i) => ({
-    x: (i / (REVENUE_DATA.length - 1)) * cardW,
-    y: chartH - ((v - minVal) / range) * (chartH - 10) - 5,
-  }));
   return (
-    <View style={{ marginTop: 10 }}>
-      <View style={{ height: chartH, position: "relative" }}>
-        {[0.33, 0.66, 1].map((f) => (
-          <View key={f} style={{
-            position: "absolute", left: 0, right: 0,
-            top: chartH - f * (chartH - 10) - 5, height: 1, backgroundColor: WHITE_08
-          }} />
-        ))}
-        {pts.slice(0, -1).map((p, i) => {
-          const nx = pts[i + 1].x; const ny = pts[i + 1].y;
-          const dx = nx - p.x; const dy = ny - p.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
-          return (
-            <View key={i} style={{
-              position: "absolute", left: p.x, top: p.y - 1, width: len,
-              height: 2, backgroundColor: ACCENT_LIGHT, borderRadius: 1,
-              transform: [{ rotate: `${ang}deg` }], transformOrigin: "0 50%"
-            }} />
-          );
-        })}
-        {pts.map((p, i) => (
-          <View key={i} style={{
-            position: "absolute", left: p.x - 4, top: p.y - 4,
-            width: 8, height: 8, borderRadius: 4,
-            backgroundColor: i === pts.length - 1 ? ACCENT_LIGHT : WHITE_20,
-            borderWidth: i === pts.length - 1 ? 2 : 0, borderColor: WHITE
-          }} />
-        ))}
-      </View>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-        {REVENUE_MONTHS.map((m) => <Text key={m} style={{ fontSize: 9, color: WHITE_40 }}>{m}</Text>)}
-      </View>
-    </View>
-  );
-}
-
-// ─── Donut summary ────────────────────────────────────────────────────────────
-function DonutSummary() {
-  const pct = Math.round((9 / 12) * 100);
-  return (
-    <View style={{ alignItems: "center" }}>
-      <View style={[dn.ring, { borderColor: ACCENT_LIGHT }]}>
-        <View style={[dn.inner, { borderColor: WHITE_08 }]}>
-          <Text style={dn.pct}>{pct}%</Text>
-          <Text style={dn.sub}>Occupied</Text>
+    <View>
+      {totalRooms === 0 ? (
+        <View style={s.emptyState}>
+          <Text style={s.emptyTxt}>Add properties to see occupancy.</Text>
         </View>
-      </View>
-      <View style={dn.legend}>
-        <View style={dn.item}><View style={[dn.dot, { backgroundColor: ACCENT_LIGHT }]} /><Text style={dn.txt}>9 Occupied</Text></View>
-        <View style={dn.item}><View style={[dn.dot, { backgroundColor: DANGER }]} /><Text style={dn.txt}>3 Vacant</Text></View>
-      </View>
+      ) : <>
+        <View style={s.occupancyTrack}>
+          {occupiedRooms > 0 && <View style={[s.occupancyOccupied, { width: `${occupiedPercentage}%` }]} />}
+          {vacantRooms > 0 && <View style={[s.occupancyVacant, { width: `${vacantPercentage}%` }]} />}
+        </View>
+        <View style={s.occupancyLegend}>
+          <View style={s.occupancyLegendItem}>
+            <View style={[s.occupancyDot, { backgroundColor: ACCENT_LIGHT }]} />
+            <Text style={s.occupancyLegendText}>Occupied</Text>
+            <Text style={s.occupancyLegendValue}>{occupiedRooms}</Text>
+          </View>
+          <View style={s.occupancyLegendItem}>
+            <View style={[s.occupancyDot, { backgroundColor: DANGER }]} />
+            <Text style={s.occupancyLegendText}>Vacant</Text>
+            <Text style={s.occupancyLegendValue}>{vacantRooms}</Text>
+          </View>
+        </View>
+        <Text style={s.occupancyCaption}>
+          {Math.round(occupiedPercentage)}% of {totalRooms} rooms currently occupied
+        </Text>
+      </>}
     </View>
   );
 }
-const dn = StyleSheet.create({
-  ring: { width: 96, height: 96, borderRadius: 48, borderWidth: 10, alignItems: "center", justifyContent: "center" },
-  inner: { width: 74, height: 74, borderRadius: 37, borderWidth: 10, alignItems: "center", justifyContent: "center" },
-  pct: { fontSize: 17, fontWeight: "800", color: WHITE, lineHeight: 21 },
-  sub: { fontSize: 8, color: WHITE_40, letterSpacing: 0.5, textTransform: "uppercase" },
-  legend: { marginTop: 10, gap: 6 },
-  item: { flexDirection: "row", alignItems: "center", gap: 6 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  txt: { fontSize: 11, color: WHITE_72 },
-});
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 function getInitials(name: string): string {
@@ -354,7 +273,7 @@ type TenantRecord = {
   leaseStart: string;
   leaseEnd: string;
   monthlyRent: number;
-  property?: { name: string; addressLine1: string; city: string };
+  property?: { name: string; addressLine1: string; city: string; roomNumber?: string };
   tenant?: { fullName: string; email: string; landlordCode: string };
 };
 
@@ -394,6 +313,31 @@ export default function LandlordDashboard() {
     router.replace("/welcome");
   };
   const [activeTab, setActiveTab] = useState<"overview" | "properties" | "tenants" | "finance">("overview");
+  const [dashboard, setDashboard] = useState<LandlordDashboardData | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState("");
+
+  const fetchDashboard = useCallback(async () => {
+    setDashboardLoading(true);
+    setDashboardError("");
+    try {
+      const token = await getToken();
+      if (!token) { setDashboardError("Not authenticated."); return; }
+      const res = await fetch(`${API_URL}/api/landlord/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        setDashboardError(json?.error?.message ?? "Failed to load portfolio data.");
+        return;
+      }
+      setDashboard(json?.data ?? null);
+    } catch {
+      setDashboardError("Network error — is the server running?");
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [getToken]);
 
   // ── Tenants state ──────────────────────────────────────────────────────────
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
@@ -422,20 +366,9 @@ export default function LandlordDashboard() {
     }
   }, [getToken]);
 
-  // Fetch tenants on mount (so Overview tab can show the count too)
-  useEffect(() => {
-    fetchTenants();
-  }, []);
-
-  // Re-fetch when the Tenants tab is activated and data is stale
-  useEffect(() => {
-    if (activeTab === "tenants" && tenants.length === 0 && !tenantsLoading) {
-      fetchTenants();
-    }
-  }, [activeTab]);
-
   // ── Properties state ───────────────────────────────────────────────────────
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
+  const [propertiesLoaded, setPropertiesLoaded] = useState(false);
   const [propsLoading, setPropsLoading] = useState(false);
   const [propsError, setPropsError] = useState("");
 
@@ -451,6 +384,7 @@ export default function LandlordDashboard() {
       const json = await res.json().catch(() => null);
       if (!res.ok) { setPropsError(json?.error?.message ?? "Failed to load properties."); return; }
       setProperties(json?.data ?? []);
+      setPropertiesLoaded(true);
     } catch {
       setPropsError("Network error — is the server running?");
     } finally {
@@ -458,13 +392,9 @@ export default function LandlordDashboard() {
     }
   }, [getToken]);
 
-  useEffect(() => { fetchProperties(); }, []);
-
-  useEffect(() => {
-    if (activeTab === "properties" && properties.length === 0 && !propsLoading) {
-      fetchProperties();
-    }
-  }, [activeTab]);
+  useStableFocusEffect(() => {
+    void Promise.all([fetchProperties(), fetchDashboard(), fetchTenants()]);
+  });
 
   // ── Allocate modal state ───────────────────────────────────────────────────
   const [allocateTarget, setAllocateTarget] = useState<PropertyRecord | null>(null);
@@ -525,6 +455,11 @@ export default function LandlordDashboard() {
 
   const displayName = user?.fullName ?? user?.username ?? "there";
   const initials = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
+  const totalRooms = properties.length;
+  const occupiedRooms = properties.filter((property) => property.status === "OCCUPIED").length;
+  const occupancyPercentage = totalRooms > 0
+    ? Math.round((occupiedRooms / totalRooms) * 100)
+    : 0;
 
   const headerOpacity = useSharedValue(0);
   const headerTranslateY = useSharedValue(-16);
@@ -563,7 +498,6 @@ export default function LandlordDashboard() {
         <View style={s.hRight}>
           <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
             <Text style={s.iconBtnTxt}>{"\uD83D\uDD14"}</Text>
-            <View style={s.badge}><Text style={s.badgeTxt}>5</Text></View>
           </TouchableOpacity>
           <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
             <Text style={s.iconBtnTxt}>{"\u2699\uFE0F"}</Text>
@@ -592,6 +526,11 @@ export default function LandlordDashboard() {
         style={s.body}
         contentContainerStyle={[s.bodyContent, { paddingBottom: Math.max(insets.bottom + 24, 40) }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl
+          refreshing={dashboardLoading}
+          onRefresh={() => { void Promise.all([fetchProperties(), fetchDashboard(), fetchTenants()]); }}
+          tintColor={ACCENT_LIGHT}
+        />}
       >
 
         {/* ── Tenants tab ──────────────────────────────────────────────────── */}
@@ -651,7 +590,9 @@ export default function LandlordDashboard() {
                       <View style={s.tenantBody}>
                         <Text style={s.tenantName}>{name}</Text>
                         <Text style={s.tenantMeta}>{email}</Text>
-                        <Text style={s.tenantMeta}>Property: {prop}</Text>
+                        <Text style={s.tenantMeta}>
+                          Property: {prop}{lease.property?.roomNumber ? ` · Room No. ${lease.property.roomNumber}` : ""}
+                        </Text>
                         <View style={s.tenantRow}>
                           <View style={[s.pill, { backgroundColor: "rgba(74,144,217,0.15)" }]}>
                             <Text style={[s.pillTxt, { color: ACCENT_LIGHT }]}>Code: {code}</Text>
@@ -691,7 +632,7 @@ export default function LandlordDashboard() {
                   </View>
                 </View>
 
-                {propsLoading && (
+                {!propertiesLoaded && propsLoading && (
                   <View style={s.emptyState}><ActivityIndicator color={ACCENT_LIGHT} /></View>
                 )}
                 {!propsLoading && propsError !== "" && (
@@ -699,7 +640,7 @@ export default function LandlordDashboard() {
                     <Text style={[s.emptyTxt, { color: DANGER }]}>{propsError}</Text>
                   </View>
                 )}
-                {!propsLoading && propsError === "" && properties.length === 0 && (
+                {propertiesLoaded && propsError === "" && properties.length === 0 && (
                   <View style={s.emptyState}>
                     <Text style={s.emptyTxt}>No properties yet.</Text>
                     <TouchableOpacity onPress={() => router.push("/landlord/add-property")} activeOpacity={0.7} style={{ marginTop: 10 }}>
@@ -708,11 +649,11 @@ export default function LandlordDashboard() {
                   </View>
                 )}
 
-                {!propsLoading && properties.map((prop, idx) => {
+                {propertiesLoaded && properties.map((prop, idx) => {
                   const isLast = idx === properties.length - 1;
                   const isVacant = prop.status === "VACANT";
                   return (
-                    <View key={prop._id} style={[s.propItem, !isLast && s.borderTop]}>
+                    <View key={prop._id} style={[s.propItem, !isLast && s.propDivider]}>
                       <View style={s.propTop}>
                         <View style={{ flex: 1 }}>
                           <Text style={s.propName}>{prop.name}</Text>
@@ -763,11 +704,11 @@ export default function LandlordDashboard() {
               <View style={s.kpiRow}>
                 {QUICK_STATS.map((stat) => {
                   const value =
-                    stat.label === "Tenants"
-                      ? tenantsLoading ? "…" : String(tenants.filter(t => t.leaseStart).length)
-                      : stat.label === "Properties"
-                        ? propsLoading ? "…" : String(properties.length)
-                        : stat.value;
+                    dashboardLoading && !dashboard ? "…" :
+                    stat.label === "Tenants" ? String(dashboard?.metrics?.activeTenantCount ?? 0) :
+                    stat.label === "Properties" ? String(dashboard?.metrics?.propertyCount ?? 0) :
+                    stat.label === "Vacancies" ? String(dashboard?.metrics?.vacantProperties ?? 0) :
+                    String(dashboard?.metrics?.openMaintenanceCount ?? 0);
                   return (
                     <View key={stat.label} style={[s.kpiCard, { backgroundColor: stat.bg }]}>
                       <Text style={s.kpiIcon}>{stat.icon}</Text>
@@ -786,13 +727,21 @@ export default function LandlordDashboard() {
                   <View style={s.cardRow}>
                     <Text style={s.cardTitle}>Revenue</Text>
                   </View>
-                  <Text style={s.bigVal}>--</Text>
-                  <Text style={s.cardSub}>This month</Text>
+                  <Text style={s.bigVal}>
+                    {dashboardError && !dashboard ? "—" : `₹${(dashboard?.metrics?.monthlyRevenue ?? 0).toLocaleString("en-IN")}`}
+                  </Text>
+                  <Text style={s.cardSub}>{dashboardError || "Collected this month"}</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Occupancy</Text>
-                  <Text style={[s.bigVal, { marginTop: 8 }]}>--%</Text>
-                  <Text style={s.cardSub}>No data yet</Text>
+                  <Text style={[s.bigVal, { marginTop: 8 }]}>
+                    {dashboardLoading && !dashboard ? "…" : dashboardError && !dashboard ? "—" : `${dashboard?.metrics?.occupancyPercentage ?? occupancyPercentage}%`}
+                  </Text>
+                  <Text style={s.cardSub}>
+                    {dashboardError && !dashboard
+                      ? dashboardError
+                      : `${dashboard?.metrics?.occupiedProperties ?? occupiedRooms} of ${dashboard?.metrics?.propertyCount ?? totalRooms} properties occupied`}
+                  </Text>
                 </View>
               </View>
             </FadeIn>
@@ -800,8 +749,12 @@ export default function LandlordDashboard() {
             {/* Occupancy trend */}
             <FadeIn delay={160}>
               <View style={s.card}>
-                <SectionHeader title="Occupancy Trend" action="6 months" />
-                <OccupancyChart />
+                <SectionHeader title="Live Occupancy" action="Current" />
+                {dashboard
+                  ? <OccupancyChart totalRooms={totalRooms} occupiedRooms={occupiedRooms} />
+                  : <View style={s.emptyState}>
+                      <ActivityIndicator color={ACCENT_LIGHT} />
+                    </View>}
               </View>
             </FadeIn>
 
@@ -811,24 +764,33 @@ export default function LandlordDashboard() {
                 <SectionHeader title="Rent Collection" />
                 <View style={s.rentRow}>
                   <View style={s.rentStat}>
-                    <Text style={[s.rentVal, { color: SUCCESS }]}>--</Text>
+                    <Text style={[s.rentVal, { color: SUCCESS }]}>₹{(dashboard?.metrics?.rentCollection?.collected ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.rentLbl}>Collected</Text>
                   </View>
                   <View style={s.rentDiv} />
                   <View style={s.rentStat}>
-                    <Text style={[s.rentVal, { color: WARNING }]}>--</Text>
+                    <Text style={[s.rentVal, { color: WARNING }]}>₹{(dashboard?.metrics?.rentCollection?.pending ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.rentLbl}>Pending</Text>
                   </View>
                   <View style={s.rentDiv} />
                   <View style={s.rentStat}>
-                    <Text style={[s.rentVal, { color: DANGER }]}>--</Text>
+                    <Text style={[s.rentVal, { color: DANGER }]}>₹{(dashboard?.metrics?.rentCollection?.overdue ?? 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.rentLbl}>Overdue</Text>
                   </View>
                 </View>
                 <View style={s.progTrack}>
-                  <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
+                  <View style={[s.progFill, {
+                    width: `${dashboard?.metrics?.rentCollection?.expected
+                      ? Math.min(100, Math.round((dashboard.metrics.rentCollection.collected / dashboard.metrics.rentCollection.expected) * 100))
+                      : 0}%`,
+                    backgroundColor: SUCCESS,
+                  }]} />
                 </View>
-                <Text style={s.progLbl}>No rent data available yet</Text>
+                <Text style={s.progLbl}>
+                  {dashboardError || `${dashboard?.metrics?.rentCollection?.expected
+                    ? Math.min(100, Math.round((dashboard.metrics.rentCollection.collected / dashboard.metrics.rentCollection.expected) * 100))
+                    : 0}% of expected monthly rent collected`}
+                </Text>
               </View>
             </FadeIn>
 
@@ -836,9 +798,19 @@ export default function LandlordDashboard() {
             <FadeIn delay={280}>
               <View style={s.card}>
                 <SectionHeader title="Maintenance Requests" action="View all" />
-                <View style={s.emptyState}>
-                  <Text style={s.emptyTxt}>No maintenance requests yet</Text>
-                </View>
+                {dashboardLoading && !dashboard ? <ActivityIndicator color={ACCENT_LIGHT} /> :
+                  dashboardError && !dashboard ? <Text style={[s.emptyTxt, { color: DANGER }]}>{dashboardError}</Text> :
+                  (dashboard?.maintenanceRequests ?? []).filter((item) => item.status === "OPEN" || item.status === "IN_PROGRESS").length === 0
+                    ? <View style={s.emptyState}><Text style={s.emptyTxt}>No open maintenance requests.</Text></View>
+                    : (dashboard?.maintenanceRequests ?? [])
+                      .filter((item) => item.status === "OPEN" || item.status === "IN_PROGRESS")
+                      .slice(0, 3)
+                      .map((item) => (
+                        <View key={item._id} style={s.tenantItem}>
+                          <Text style={s.tenantName}>{item.title}</Text>
+                          <Text style={s.tenantMeta}>{item.status.replace("_", " ")} · {item.priority}</Text>
+                        </View>
+                      ))}
               </View>
             </FadeIn>
 
@@ -846,19 +818,51 @@ export default function LandlordDashboard() {
             <FadeIn delay={340}>
               <View style={s.card}>
                 <SectionHeader title="Recent Activity" action="See all" />
-                <View style={s.emptyState}>
-                  <Text style={s.emptyTxt}>No recent activity</Text>
-                </View>
+                {dashboardLoading && !dashboard ? <ActivityIndicator color={ACCENT_LIGHT} /> :
+                  dashboardError && !dashboard ? <Text style={[s.emptyTxt, { color: DANGER }]}>{dashboardError}</Text> :
+                  (dashboard?.payments ?? []).length === 0 && (dashboard?.leases ?? []).length === 0
+                    ? <View style={s.emptyState}><Text style={s.emptyTxt}>No recorded activity yet.</Text></View>
+                    :                     [...(dashboard?.payments ?? []).map((item) => ({
+                        id: `payment-${item._id}`,
+                        title: item.status === "PAID" ? "Rent payment received" : "Rent payment submitted",
+                        detail: `₹${Number(item.amount).toLocaleString("en-IN")} · ${item.period ?? "Rent"}`,
+                        date: item.paidAt ?? item.createdAt,
+                      })), ...(dashboard?.leases ?? []).map((item) => ({
+                        id: `lease-${item._id}`,
+                        title: "Active tenancy",
+                        detail: `${item.firstName ?? ""} ${item.lastName ?? ""} · ${typeof item.property === "object" ? item.property?.name ?? "Property" : "Property"}`,
+                        date: item.createdAt,
+                      }))]
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .slice(0, 4)
+                      .map((item) => (
+                        <View key={item.id} style={s.tenantItem}>
+                          <Text style={s.tenantName}>{item.title}</Text>
+                          <Text style={s.tenantMeta}>{item.detail} · {new Date(item.date).toLocaleDateString("en-IN")}</Text>
+                        </View>
+                      ))}
               </View>
             </FadeIn>
 
             {/* Upcoming events */}
             <FadeIn delay={400}>
               <View style={s.card}>
-                <SectionHeader title="Upcoming Events" action="Calendar" />
-                <View style={s.emptyState}>
-                  <Text style={s.emptyTxt}>No upcoming events</Text>
-                </View>
+                <SectionHeader title="Upcoming Inspections" action="View all" />
+                {(dashboard?.inspections ?? []).filter((inspection) =>
+                  inspection.status !== "COMPLETED" && new Date(inspection.scheduledAt) >= new Date()
+                ).length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No upcoming inspections.</Text></View>
+                ) : (dashboard?.inspections ?? []).filter((inspection) =>
+                  inspection.status !== "COMPLETED" && new Date(inspection.scheduledAt) >= new Date()
+                ).slice(0, 3).map((inspection, index) => (
+                  <View key={inspection._id} style={[s.tenantItem, index > 0 && s.borderTop]}>
+                    <Text style={s.tenantName}>{inspection.type}</Text>
+                    <Text style={s.tenantMeta}>
+                      {typeof inspection.property === "object" ? inspection.property?.name ?? "Property" : "Property"}
+                      {" · "}{new Date(inspection.scheduledAt).toLocaleString("en-IN")}
+                    </Text>
+                  </View>
+                ))}
               </View>
             </FadeIn>
 
@@ -871,6 +875,7 @@ export default function LandlordDashboard() {
                     { label: "Add Property", color: ACCENT_LIGHT, route: "/landlord/add-property" },
                     { label: "Add Tenant", color: SUCCESS, route: "/landlord/add-tenant" },
                     { label: "Send Notice", color: WARNING, route: "/landlord/send-notice" },
+                    { label: "Messages", color: ACCENT, route: "/landlord/messages" },
                     { label: "View Reports", color: PURPLE, route: "/landlord/view-reports" },
                     { label: "New Invoice", color: ACCENT_LIGHT, route: "/landlord/new-invoice" },
                     { label: "Inspections", color: DANGER, route: "/landlord/inspections" },
@@ -1008,6 +1013,15 @@ const s = StyleSheet.create({
   cardTitle: { fontSize: 13, fontWeight: "700", color: WHITE_72, letterSpacing: 0.3 },
   bigVal: { fontSize: 24, fontWeight: "800", color: WHITE, marginBottom: 2 },
   cardSub: { fontSize: 11, color: WHITE_40 },
+  occupancyTrack: { height: 14, flexDirection: "row", overflow: "hidden", borderRadius: 7, backgroundColor: WHITE_08, marginTop: 8 },
+  occupancyOccupied: { height: "100%", backgroundColor: ACCENT_LIGHT },
+  occupancyVacant: { height: "100%", backgroundColor: DANGER },
+  occupancyLegend: { flexDirection: "row", justifyContent: "space-between", marginTop: 16 },
+  occupancyLegendItem: { flexDirection: "row", alignItems: "center", gap: 7 },
+  occupancyDot: { width: 8, height: 8, borderRadius: 4 },
+  occupancyLegendText: { fontSize: 12, color: WHITE_72 },
+  occupancyLegendValue: { fontSize: 12, fontWeight: "700", color: WHITE },
+  occupancyCaption: { fontSize: 11, color: WHITE_40, marginTop: 12, textAlign: "center" },
   pill: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
   pillTxt: { fontSize: 11, fontWeight: "700" },
 
@@ -1068,6 +1082,7 @@ const s = StyleSheet.create({
 
   // ── Property list items ────────────────────────────────────────────────────
   propItem: { paddingVertical: 14 },
+  propDivider: { borderBottomWidth: 1, borderBottomColor: WHITE_08 },
   propTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 8 },
   propName: { fontSize: 14, fontWeight: "700", color: WHITE, marginBottom: 2 },
   propAddr: { fontSize: 11, color: WHITE_40, marginBottom: 2 },

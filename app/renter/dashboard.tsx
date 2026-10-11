@@ -7,8 +7,8 @@ import {
   ScrollView,
   Platform,
   StatusBar,
-  useWindowDimensions,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -21,6 +21,7 @@ import Animated, {
 import { useRouter } from "expo-router";
 import { useUser, useAuth, useClerk } from "@clerk/expo";
 import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BRAND_BLUE   = "#1A3C5E";
@@ -48,29 +49,23 @@ const WHITE_05     = "rgba(255,255,255,0.05)";
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 const KPI_CARDS = [
-  { label: "Rent Due",     value: "--", icon: "🏷️", color: WARNING,      bg: WARNING_BG  },
-  { label: "Days Left",    value: "--", icon: "📅", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
-  { label: "Open Tickets", value: "--", icon: "🔧", color: DANGER,       bg: DANGER_BG   },
-  { label: "Messages",     value: "--", icon: "💬", color: TEAL,         bg: TEAL_BG     },
+  { label: "Rent Due", icon: "🏷️", color: WARNING, bg: WARNING_BG },
+  { label: "Days Left", icon: "📅", color: ACCENT_LIGHT, bg: "rgba(74,144,217,0.15)" },
+  { label: "Open Tickets", icon: "🔧", color: DANGER, bg: DANGER_BG },
+  { label: "Payments", icon: "💳", color: TEAL, bg: TEAL_BG },
 ];
-
-const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
-const MAINTENANCE_REQUESTS: { id: string; issue: string; raised: string; priority: string; status: string }[] = [];
-const MESSAGES: { id: string; from: string; preview: string; time: string; read: boolean }[] = [];
-const DOCUMENTS: { id: string; name: string; date: string; icon: string; color: string }[] = [];
-const UPCOMING_EVENTS: { id: string; title: string; date: string; color: string }[] = [];
-const NOTICE_BOARD: { id: string; title: string; body: string; type: string }[] = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function statusColor(s: string) {
-  if (s === "Paid" || s === "Resolved") return SUCCESS;
-  if (s === "In Progress")              return WARNING;
-  if (s === "Late")                     return DANGER;
+  if (s === "PAID" || s === "RESOLVED" || s === "CLOSED") return SUCCESS;
+  if (s === "IN_PROGRESS" || s === "PENDING") return WARNING;
+  if (s === "LATE" || s === "OPEN") return DANGER;
   return ACCENT_LIGHT;
 }
 function priorityColor(p: string) {
   if (p === "High")   return DANGER;
-  if (p === "Medium") return WARNING;
+  if (p === "HIGH") return DANGER;
+  if (p === "Medium" || p === "MEDIUM") return WARNING;
   return SUCCESS;
 }
 
@@ -134,46 +129,6 @@ const rc = StyleSheet.create({
   legendTxt:  { fontSize: 11, color: WHITE_72 },
 });
 
-// ─── Mini payment sparkline ───────────────────────────────────────────────────
-function PaymentSparkline() {
-  const { width } = useWindowDimensions();
-  const chartW = (width - 32 - 12) / 2 - 32;
-  const chartH = 48;
-  const vals   = [1, 1, 0.5, 1, 1]; // 1 = on-time, 0.5 = late
-  const pts    = vals.map((v, i) => ({
-    x: (i / (vals.length - 1)) * chartW,
-    y: chartH - v * (chartH - 10) - 5,
-  }));
-  return (
-    <View style={{ marginTop: 10 }}>
-      <View style={{ height: chartH, position: "relative" }}>
-        {pts.slice(0, -1).map((p, i) => {
-          const nx = pts[i + 1].x; const ny = pts[i + 1].y;
-          const dx = nx - p.x;     const dy = ny - p.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
-          return (
-            <View key={i} style={{ position: "absolute", left: p.x, top: p.y - 1, width: len,
-              height: 2, backgroundColor: SUCCESS, borderRadius: 1,
-              transform: [{ rotate: `${ang}deg` }], transformOrigin: "0 50%" }} />
-          );
-        })}
-        {pts.map((p, i) => (
-          <View key={i} style={{ position: "absolute", left: p.x - 4, top: p.y - 4,
-            width: 8, height: 8, borderRadius: 4,
-            backgroundColor: vals[i] < 1 ? DANGER : SUCCESS,
-            borderWidth: i === pts.length - 1 ? 2 : 0, borderColor: WHITE }} />
-        ))}
-      </View>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-        {["Jul", "Aug", "Sep", "Oct", "Nov"].map((m) => (
-          <Text key={m} style={{ fontSize: 9, color: WHITE_40 }}>{m}</Text>
-        ))}
-      </View>
-    </View>
-  );
-}
-
 // ─── Main screen ──────────────────────────────────────────────────────────────
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -194,6 +149,9 @@ type LeaseRecord = {
   leaseEnd: string;
   monthlyRent: number;
   status: string;
+  rentDueDay?: number;
+  depositAmount?: number;
+  landlord?: { fullName?: string; email?: string };
   property?: {
     _id: string;
     name: string;
@@ -209,6 +167,29 @@ type LeaseRecord = {
     description?: string;
   };
 };
+
+type PaymentRecord = {
+  _id: string;
+  amount: number;
+  status: "PAID" | "PENDING" | "LATE";
+  period?: string;
+  paidAt?: string;
+  createdAt: string;
+  reference?: string;
+};
+
+type MaintenanceRecord = {
+  _id: string;
+  title: string;
+  priority: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+  createdAt: string;
+};
+type NoticeRecord = { _id: string; subject: string; body: string; type: string; readAt?: string | null; createdAt: string };
+type InspectionRecord = { _id: string; type: string; scheduledAt: string; status: string; property?: { name?: string }; };
+type DocumentRecord = { _id: string; name: string; category: string; createdAt: string; };
+type MessageRecord = { _id: string; subject?: string; body: string; senderRole: "LANDLORD" | "RENTER"; createdAt: string; sender?: { fullName?: string }; };
+type InvoiceRecord = { _id: string; invoiceNumber: string; type: string; amount: number; dueDate: string; status: string; notes?: string; createdAt: string };
 
 export default function RenterDashboard() {
   const router    = useRouter();
@@ -226,6 +207,14 @@ export default function RenterDashboard() {
   const [lease,        setLease]        = useState<LeaseRecord | null>(null);
   const [leaseLoading, setLeaseLoading] = useState(true);
   const [leaseError,   setLeaseError]   = useState("");
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRecord[]>([]);
+  const [notices, setNotices] = useState<NoticeRecord[]>([]);
+  const [inspections, setInspections] = useState<InspectionRecord[]>([]);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
+  const [activityError, setActivityError] = useState("");
 
   const fetchLease = useCallback(async () => {
     setLeaseLoading(true);
@@ -247,7 +236,52 @@ export default function RenterDashboard() {
     }
   }, [getToken]);
 
-  useEffect(() => { fetchLease(); }, []);
+  const fetchActivity = useCallback(async () => {
+    setActivityError("");
+    try {
+      const token = await getToken();
+      if (!token) { setActivityError("Not authenticated."); return; }
+      const headers = { Authorization: `Bearer ${token}` };
+      const [paymentResponse, maintenanceResponse, noticeResponse, inspectionResponse, documentResponse, messageResponse, invoiceResponse] = await Promise.all([
+        fetch(`${API_URL}/api/renter/payments`, { headers }),
+        fetch(`${API_URL}/api/renter/maintenance`, { headers }),
+        fetch(`${API_URL}/api/renter/notices`, { headers }),
+        fetch(`${API_URL}/api/renter/inspections`, { headers }),
+        fetch(`${API_URL}/api/renter/documents`, { headers }),
+        fetch(`${API_URL}/api/renter/messages`, { headers }),
+        fetch(`${API_URL}/api/renter/invoices`, { headers }),
+      ]);
+      const [paymentJson, maintenanceJson, noticeJson, inspectionJson, documentJson, messageJson, invoiceJson] = await Promise.all([
+        paymentResponse.json().catch(() => null),
+        maintenanceResponse.json().catch(() => null),
+        noticeResponse.json().catch(() => null),
+        inspectionResponse.json().catch(() => null),
+        documentResponse.json().catch(() => null),
+        messageResponse.json().catch(() => null),
+        invoiceResponse.json().catch(() => null),
+      ]);
+      const failedResponse = [paymentResponse, maintenanceResponse, noticeResponse, inspectionResponse, documentResponse, invoiceResponse]
+        .find((response) => !response.ok);
+      if (failedResponse || (!messageResponse.ok && messageResponse.status !== 404)) {
+        setActivityError(paymentJson?.error?.message ?? maintenanceJson?.error?.message ?? noticeJson?.error?.message
+          ?? inspectionJson?.error?.message ?? documentJson?.error?.message ?? invoiceJson?.error?.message ?? messageJson?.error?.message ?? "Failed to load renter activity.");
+        return;
+      }
+      setPayments(paymentJson?.data ?? []);
+      setMaintenanceRequests(maintenanceJson?.data ?? []);
+      setNotices(noticeJson?.data ?? []);
+      setInspections(inspectionJson?.data ?? []);
+      setDocuments(documentJson?.data ?? []);
+      setMessages(messageResponse.ok ? messageJson?.data ?? [] : []);
+      setInvoices(invoiceJson?.data ?? []);
+    } catch {
+      setActivityError("Network error — is the server running?");
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => {
+    void Promise.all([fetchLease(), fetchActivity()]);
+  });
 
   const displayName = user?.fullName ?? user?.username ?? "there";
   const initials    = user?.fullName ? getInitials(user.fullName) : (user?.username?.slice(0, 2).toUpperCase() ?? "?");
@@ -273,7 +307,38 @@ export default function RenterDashboard() {
     { id: "messages",    label: "Messages"    },
   ] as const;
 
-  const unread = MESSAGES.filter((m) => !m.read).length;
+  const unread = notices.filter((notice) => !notice.readAt).length;
+  const today = new Date();
+  const rentDueDay = Math.min(Math.max(lease?.rentDueDay ?? 1, 1), 31);
+  const currentDueDate = new Date(today.getFullYear(), today.getMonth(), rentDueDay);
+  const paidThisMonth = payments
+    .filter((payment) => payment.status === "PAID" && new Date(payment.paidAt ?? payment.createdAt).getMonth() === today.getMonth()
+      && new Date(payment.paidAt ?? payment.createdAt).getFullYear() === today.getFullYear())
+    .reduce((total, payment) => total + payment.amount, 0);
+  const amountDue = Math.max((lease?.monthlyRent ?? 0) - paidThisMonth, 0);
+  if (paidThisMonth >= (lease?.monthlyRent ?? Infinity)) currentDueDate.setMonth(currentDueDate.getMonth() + 1);
+  const daysUntilDue = Math.max(0, Math.ceil((currentDueDate.getTime() - today.getTime()) / 86400000));
+  const openRequestCount = maintenanceRequests.filter((request) => request.status === "OPEN" || request.status === "IN_PROGRESS").length;
+  const thisMonthPayments = payments.filter((payment) => {
+    const date = new Date(payment.createdAt);
+    return date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
+  }).length;
+
+  const markNoticeRead = async (noticeId: string) => {
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/renter/notices/${noticeId}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not update notice.");
+      setNotices((items) => items.map((notice) => notice._id === noticeId ? json.data : notice));
+    } catch (error) {
+      setActivityError(error instanceof Error ? error.message : "Could not update notice.");
+    }
+  };
 
   return (
     <View style={s.root}>
@@ -325,6 +390,11 @@ export default function RenterDashboard() {
         style={s.body}
         contentContainerStyle={[s.bodyContent, { paddingBottom: Math.max(insets.bottom + 24, 40) }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl
+          refreshing={leaseLoading}
+          onRefresh={() => { void Promise.all([fetchLease(), fetchActivity()]); }}
+          tintColor={ACCENT_LIGHT}
+        />}
       >
 
         {/* ══════════════ HOME TAB ══════════════ */}
@@ -333,24 +403,33 @@ export default function RenterDashboard() {
             {/* KPI row */}
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
-                {KPI_CARDS.map((k) => (
+                {KPI_CARDS.map((k) => {
+                  const value = k.label === "Rent Due"
+                    ? lease ? `₹${amountDue.toLocaleString("en-IN")}` : "—"
+                    : k.label === "Days Left"
+                      ? lease ? String(daysUntilDue) : "—"
+                      : k.label === "Open Tickets"
+                        ? String(openRequestCount)
+                        : String(thisMonthPayments);
+                  return (
                   <View key={k.label} style={[s.kpiCard, { backgroundColor: k.bg }]}>
                     <Text style={s.kpiIcon}>{k.icon}</Text>
-                    <Text style={[s.kpiVal, { color: k.color }]}>{k.value}</Text>
+                    <Text style={[s.kpiVal, { color: k.color }]}>{value}</Text>
                     <Text style={s.kpiLbl}>{k.label}</Text>
                   </View>
-                ))}
+                  );
+                })}
               </View>
             </FadeIn>
 
             {/* Rent due banner */}
             <FadeIn delay={80}>
               {(() => {
-                const rentAmt    = lease?.monthlyRent ?? 0;
-                const dueDay     = (lease as any)?.rentDueDay ?? 1;
+                const rentAmt    = amountDue;
+                const dueDay     = rentDueDay;
                 const today      = new Date();
                 const dueDate    = new Date(today.getFullYear(), today.getMonth(), dueDay);
-                if (dueDate < today) dueDate.setMonth(dueDate.getMonth() + 1);
+                if (dueDate < today && amountDue === 0) dueDate.setMonth(dueDate.getMonth() + 1);
                 const msLeft     = dueDate.getTime() - today.getTime();
                 const daysLeft   = Math.max(0, Math.ceil(msLeft / 86400000));
                 const daysInMon  = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -359,7 +438,7 @@ export default function RenterDashboard() {
                     <View style={s.rentBannerLeft}>
                       <Text style={s.rentBannerLabel}>NEXT RENT DUE</Text>
                       <Text style={s.rentBannerAmount}>
-                        {lease ? `₹${rentAmt.toLocaleString("en-IN")}` : "--"}
+                        {lease ? `₹${rentAmt.toLocaleString("en-IN")}` : "—"}
                       </Text>
                       <Text style={s.rentBannerDate}>
                         {lease ? `Due on ${dueDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}` : "No lease set up yet"}
@@ -490,18 +569,19 @@ export default function RenterDashboard() {
             <FadeIn delay={220}>
               <View style={s.card}>
                 <SectionHeader title="Notice Board" />
-                {NOTICE_BOARD.length === 0 ? (
+                {notices.length === 0 ? (
                   <View style={s.emptyState}><Text style={s.emptyTxt}>No notices yet</Text></View>
-                ) : NOTICE_BOARD.map((n, i) => (
-                  <View key={n.id} style={[s.noticeItem, i > 0 && s.borderTop]}>
-                    <View style={[s.noticeIconBox, { backgroundColor: n.type === "warning" ? WARNING_BG : "rgba(74,144,217,0.12)" }]}>
-                      <Text style={{ fontSize: 16 }}>{n.type === "warning" ? "⚠️" : "ℹ️"}</Text>
+                ) : notices.slice(0, 3).map((n, i) => (
+                  <TouchableOpacity key={n._id} onPress={() => { if (!n.readAt) void markNoticeRead(n._id); }} style={[s.noticeItem, i > 0 && s.borderTop]} activeOpacity={0.8}>
+                    <View style={[s.noticeIconBox, { backgroundColor: n.readAt ? "rgba(74,144,217,0.12)" : WARNING_BG }]}>
+                      <Text style={{ fontSize: 16 }}>{n.readAt ? "ℹ️" : "⚠️"}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.noticeTitle}>{n.title}</Text>
+                      <Text style={s.noticeTitle}>{n.subject}</Text>
                       <Text style={s.noticeBody}>{n.body}</Text>
+                      <Text style={s.noticeBody}>{new Date(n.createdAt).toLocaleDateString("en-IN")}</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             </FadeIn>
@@ -510,16 +590,16 @@ export default function RenterDashboard() {
             <FadeIn delay={290}>
               <View style={s.card}>
                 <SectionHeader title="Upcoming Events" action="Calendar" />
-                {UPCOMING_EVENTS.length === 0 ? (
+                {inspections.filter((event) => event.status !== "COMPLETED" && new Date(event.scheduledAt) >= today).length === 0 ? (
                   <View style={s.emptyState}><Text style={s.emptyTxt}>No upcoming events</Text></View>
-                ) : UPCOMING_EVENTS.map((ev, i) => (
-                  <TouchableOpacity key={ev.id} style={[s.evItem, i < UPCOMING_EVENTS.length - 1 && s.evBorder]} activeOpacity={0.7}>
-                    <View style={[s.evDot, { backgroundColor: ev.color }]} />
-                    <Text style={s.evTitle}>{ev.title}</Text>
-                    <View style={[s.evDateBadge, { backgroundColor: `${ev.color}20` }]}>
-                      <Text style={[s.evDate, { color: ev.color }]}>{ev.date}</Text>
+                ) : inspections.filter((event) => event.status !== "COMPLETED" && new Date(event.scheduledAt) >= today).map((ev, i, events) => (
+                  <View key={ev._id} style={[s.evItem, i < events.length - 1 && s.evBorder]}>
+                    <View style={[s.evDot, { backgroundColor: ACCENT_LIGHT }]} />
+                    <Text style={s.evTitle}>{ev.type}{ev.property?.name ? ` · ${ev.property.name}` : ""}</Text>
+                    <View style={[s.evDateBadge, { backgroundColor: `${ACCENT_LIGHT}20` }]}>
+                      <Text style={[s.evDate, { color: ACCENT_LIGHT }]}>{new Date(ev.scheduledAt).toLocaleDateString("en-IN")}</Text>
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 ))}
               </View>
             </FadeIn>
@@ -550,16 +630,16 @@ export default function RenterDashboard() {
             <FadeIn delay={420}>
               <View style={s.card}>
                 <SectionHeader title="Documents" action="View all" />
-                {DOCUMENTS.length === 0 ? (
+                {documents.length === 0 ? (
                   <View style={s.emptyState}><Text style={s.emptyTxt}>No documents yet</Text></View>
-                ) : DOCUMENTS.slice(0, 3).map((doc, i) => (
-                  <TouchableOpacity key={doc.id} style={[s.docItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
-                    <View style={[s.docIconBox, { backgroundColor: `${doc.color}18` }]}>
-                      <Text style={{ fontSize: 18 }}>{doc.icon}</Text>
+                ) : documents.slice(0, 3).map((doc, i) => (
+                  <TouchableOpacity key={doc._id} style={[s.docItem, i > 0 && s.borderTop]} activeOpacity={0.7} onPress={() => router.push("/renter/documents")}>
+                    <View style={[s.docIconBox, { backgroundColor: `${ACCENT_LIGHT}18` }]}>
+                      <Text style={{ fontSize: 18 }}>📄</Text>
                     </View>
                     <View style={s.docInfo}>
                       <Text style={s.docName}>{doc.name}</Text>
-                      <Text style={s.docDate}>{doc.date}</Text>
+                      <Text style={s.docDate}>{new Date(doc.createdAt).toLocaleDateString("en-IN")} · {doc.category}</Text>
                     </View>
                     <Text style={[s.docArrow, { color: ACCENT_LIGHT }]}>›</Text>
                   </TouchableOpacity>
@@ -577,15 +657,17 @@ export default function RenterDashboard() {
                 <SectionHeader title="Payment Summary" />
                 <View style={s.twoCol}>
                   <View style={[s.summCard, { backgroundColor: SUCCESS_BG, borderColor: `${SUCCESS}30` }]}>
-                    <Text style={[s.summVal, { color: SUCCESS }]}>--</Text>
+                    <Text style={[s.summVal, { color: SUCCESS }]}>{payments.filter((payment) => payment.status === "PAID").length}</Text>
                     <Text style={s.summLbl}>On Time</Text>
                   </View>
                   <View style={[s.summCard, { backgroundColor: DANGER_BG, borderColor: `${DANGER}30` }]}>
-                    <Text style={[s.summVal, { color: DANGER }]}>--</Text>
+                    <Text style={[s.summVal, { color: DANGER }]}>{payments.filter((payment) => payment.status === "LATE").length}</Text>
                     <Text style={s.summLbl}>Late</Text>
                   </View>
                   <View style={[s.summCard, { backgroundColor: "rgba(74,144,217,0.12)", borderColor: `${ACCENT_LIGHT}30` }]}>
-                    <Text style={[s.summVal, { color: ACCENT_LIGHT }]}>--</Text>
+                    <Text style={[s.summVal, { color: ACCENT_LIGHT }]}>₹{payments
+                      .filter((payment) => payment.status === "PAID" && new Date(payment.paidAt ?? payment.createdAt).getFullYear() === today.getFullYear())
+                      .reduce((total, payment) => total + payment.amount, 0).toLocaleString("en-IN")}</Text>
                     <Text style={s.summLbl}>Paid YTD</Text>
                   </View>
                 </View>
@@ -596,17 +678,17 @@ export default function RenterDashboard() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Payment Trend</Text>
-                  <Text style={s.cardSub}>No data yet</Text>
+                  <Text style={s.cardSub}>{activityError || `${payments.length} recorded payments`}</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Next Due</Text>
-                  <Text style={s.bigVal}>--</Text>
-                  <Text style={s.cardSub}>No lease set up</Text>
+                  <Text style={s.bigVal}>{lease ? currentDueDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}</Text>
+                  <Text style={s.cardSub}>{lease ? `Due ${currentDueDate.getFullYear()}` : "No active lease"}</Text>
                   <View style={{ marginTop: 12 }}>
                     <View style={s.progTrack}>
                       <View style={[s.progFill, { width: "0%", backgroundColor: WARNING }]} />
                     </View>
-                    <Text style={s.progLbl}>No data yet</Text>
+                    <Text style={s.progLbl}>{lease ? `${daysUntilDue} days until due` : "No lease data"}</Text>
                   </View>
                 </View>
               </View>
@@ -614,22 +696,45 @@ export default function RenterDashboard() {
 
             <FadeIn delay={160}>
               <View style={s.card}>
-                <SectionHeader title="Payment History" action="Export" />
-                {PAYMENT_HISTORY.length === 0 ? (
-                  <View style={s.emptyState}><Text style={s.emptyTxt}>No payment history yet</Text></View>
-                ) : PAYMENT_HISTORY.map((p, i) => (
-                  <View key={p.id} style={[s.payItem, i > 0 && s.borderTop]}>
-                    <View style={[s.payIconBox, { backgroundColor: p.status === "Late" ? DANGER_BG : SUCCESS_BG }]}>
-                      <Text style={{ fontSize: 16 }}>{p.status === "Late" ? "⚠️" : "✅"}</Text>
+                <SectionHeader title="Invoices" />
+                {invoices.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No invoices received.</Text></View>
+                ) : invoices.map((invoice, index) => (
+                  <View key={invoice._id} style={[s.payItem, index > 0 && s.borderTop]}>
+                    <View style={[s.payIconBox, { backgroundColor: invoice.status === "PAID" ? SUCCESS_BG : WARNING_BG }]}>
+                      <Text style={{ fontSize: 16 }}>{invoice.status === "PAID" ? "✅" : "🧾"}</Text>
                     </View>
                     <View style={s.payInfo}>
-                      <Text style={s.payMonth}>{p.month}</Text>
-                      <Text style={s.payDate}>Paid: {p.date}</Text>
+                      <Text style={s.payMonth}>{invoice.type} · {invoice.invoiceNumber}</Text>
+                      <Text style={s.payDate}>Due {new Date(invoice.dueDate).toLocaleDateString("en-IN")}</Text>
                     </View>
                     <View style={s.payRight}>
-                      <Text style={s.payAmount}>{p.amount}</Text>
+                      <Text style={s.payAmount}>₹{invoice.amount.toLocaleString("en-IN")}</Text>
+                      <Text style={s.payDate}>{invoice.status}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </FadeIn>
+
+            <FadeIn delay={180}>
+              <View style={s.card}>
+                <SectionHeader title="Payment History" action="Export" />
+                {payments.length === 0 ? (
+                  <View style={s.emptyState}><Text style={s.emptyTxt}>No payment history yet</Text></View>
+                ) : payments.map((p, i) => (
+                  <View key={p._id} style={[s.payItem, i > 0 && s.borderTop]}>
+                    <View style={[s.payIconBox, { backgroundColor: p.status === "LATE" ? DANGER_BG : p.status === "PAID" ? SUCCESS_BG : WARNING_BG }]}>
+                      <Text style={{ fontSize: 16 }}>{p.status === "LATE" ? "⚠️" : p.status === "PAID" ? "✅" : "⏳"}</Text>
+                    </View>
+                    <View style={s.payInfo}>
+                      <Text style={s.payMonth}>{p.period ?? new Date(p.createdAt).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
+                      <Text style={s.payDate}>{p.reference ?? new Date(p.paidAt ?? p.createdAt).toLocaleDateString("en-IN")}</Text>
+                    </View>
+                    <View style={s.payRight}>
+                      <Text style={s.payAmount}>₹{p.amount.toLocaleString("en-IN")}</Text>
                       <View style={[s.statusBadge, { backgroundColor: `${statusColor(p.status)}22` }]}>
-                        <Text style={[s.statusTxt, { color: statusColor(p.status) }]}>{p.status}</Text>
+                        <Text style={[s.statusTxt, { color: statusColor(p.status) }]}>{p.status.replace("_", " ")}</Text>
                       </View>
                     </View>
                   </View>
@@ -645,9 +750,9 @@ export default function RenterDashboard() {
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
                 {[
-                  { label: "Open",        val: "--", color: DANGER,  bg: DANGER_BG  },
-                  { label: "In Progress", val: "--", color: WARNING, bg: WARNING_BG },
-                  { label: "Resolved",    val: "--", color: SUCCESS, bg: SUCCESS_BG },
+                  { label: "Open",        val: String(maintenanceRequests.filter((request) => request.status === "OPEN").length), color: DANGER,  bg: DANGER_BG  },
+                  { label: "In Progress", val: String(maintenanceRequests.filter((request) => request.status === "IN_PROGRESS").length), color: WARNING, bg: WARNING_BG },
+                  { label: "Resolved",    val: String(maintenanceRequests.filter((request) => request.status === "RESOLVED" || request.status === "CLOSED").length), color: SUCCESS, bg: SUCCESS_BG },
                 ].map((k) => (
                   <View key={k.label} style={[s.kpiCard, { backgroundColor: k.bg, flex: 1 }]}>
                     <Text style={[s.kpiVal, { color: k.color, fontSize: 26 }]}>{k.val}</Text>
@@ -667,20 +772,22 @@ export default function RenterDashboard() {
             <FadeIn delay={150}>
               <View style={s.card}>
                 <SectionHeader title="My Requests" action="Filter" />
-                {MAINTENANCE_REQUESTS.length === 0 ? (
+                {activityError && maintenanceRequests.length === 0 ? (
+                  <View style={s.emptyState}><Text style={[s.emptyTxt, { color: DANGER }]}>{activityError}</Text></View>
+                ) : maintenanceRequests.length === 0 ? (
                   <View style={s.emptyState}><Text style={s.emptyTxt}>No maintenance requests yet</Text></View>
-                ) : MAINTENANCE_REQUESTS.map((req, i) => (
-                  <TouchableOpacity key={req.id} style={[s.maintItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
+                ) : maintenanceRequests.map((req, i) => (
+                  <TouchableOpacity key={req._id} style={[s.maintItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={s.maintLeft}>
                       <View style={[s.priorDot, { backgroundColor: priorityColor(req.priority) }]} />
                       <View style={{ flex: 1 }}>
-                        <Text style={s.maintIssue}>{req.issue}</Text>
-                        <Text style={s.maintRaised}>Raised: {req.raised}</Text>
+                        <Text style={s.maintIssue}>{req.title}</Text>
+                        <Text style={s.maintRaised}>Raised: {new Date(req.createdAt).toLocaleDateString("en-IN")}</Text>
                       </View>
                     </View>
                     <View style={s.maintRight}>
                       <View style={[s.statusBadge, { backgroundColor: `${statusColor(req.status)}22` }]}>
-                        <Text style={[s.statusTxt, { color: statusColor(req.status) }]}>{req.status}</Text>
+                        <Text style={[s.statusTxt, { color: statusColor(req.status) }]}>{req.status.replace("_", " ")}</Text>
                       </View>
                       <Text style={s.maintPriority}>{req.priority}</Text>
                     </View>
@@ -714,7 +821,7 @@ export default function RenterDashboard() {
         {activeTab === "messages" && (
           <>
             <FadeIn delay={0}>
-              <TouchableOpacity style={s.composeBtn} activeOpacity={0.8}>
+              <TouchableOpacity style={s.composeBtn} activeOpacity={0.8} onPress={() => router.push("/renter/messages")}>
                 <Text style={s.composeBtnIcon}>✉️</Text>
                 <Text style={s.composeBtnTxt}>Compose Message</Text>
               </TouchableOpacity>
@@ -723,25 +830,24 @@ export default function RenterDashboard() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Inbox" />
-                {MESSAGES.length === 0 ? (
+                {messages.length === 0 ? (
                   <View style={s.emptyState}><Text style={s.emptyTxt}>No messages yet</Text></View>
-                ) : MESSAGES.map((msg, i) => (
-                  <TouchableOpacity key={msg.id} style={[s.msgItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
-                    <View style={[s.msgAvatar, { backgroundColor: msg.read ? WHITE_08 : `${ACCENT_LIGHT}30` }]}>
-                      <Text style={[s.msgAvatarTxt, { color: msg.read ? WHITE_40 : ACCENT_LIGHT }]}>
-                        {msg.from.charAt(0)}
+                ) : messages.slice(-5).reverse().map((msg, i) => (
+                  <TouchableOpacity key={msg._id} style={[s.msgItem, i > 0 && s.borderTop]} activeOpacity={0.7} onPress={() => router.push("/renter/messages")}>
+                    <View style={[s.msgAvatar, { backgroundColor: msg.senderRole === "LANDLORD" ? `${ACCENT_LIGHT}30` : WHITE_08 }]}>
+                      <Text style={[s.msgAvatarTxt, { color: msg.senderRole === "LANDLORD" ? ACCENT_LIGHT : WHITE_40 }]}>
+                        {(msg.sender?.fullName ?? (msg.senderRole === "RENTER" ? "You" : "Landlord")).charAt(0)}
                       </Text>
                     </View>
                     <View style={s.msgBody}>
                       <View style={s.msgTopRow}>
-                        <Text style={[s.msgFrom, { color: msg.read ? WHITE_72 : WHITE }]}>{msg.from}</Text>
-                        <Text style={s.msgTime}>{msg.time}</Text>
+                        <Text style={s.msgFrom}>{msg.sender?.fullName ?? (msg.senderRole === "RENTER" ? "You" : "Landlord")}</Text>
+                        <Text style={s.msgTime}>{new Date(msg.createdAt).toLocaleDateString("en-IN")}</Text>
                       </View>
-                      <Text style={[s.msgPreview, { color: msg.read ? WHITE_40 : WHITE_72 }]} numberOfLines={2}>
-                        {msg.preview}
+                      <Text style={s.msgPreview} numberOfLines={2}>
+                        {msg.subject ? `${msg.subject}: ` : ""}{msg.body}
                       </Text>
                     </View>
-                    {!msg.read && <View style={s.unreadDot} />}
                   </TouchableOpacity>
                 ))}
               </View>
@@ -750,24 +856,14 @@ export default function RenterDashboard() {
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="Contacts" />
-                {[
-                  { name: "Property Manager", role: "Management Office", icon: "🏢", color: TEAL         },
-                  { name: "Maintenance Team", role: "Repairs & Service", icon: "🔧", color: WARNING      },
-                  { name: "Emergency Line",   role: "24/7 Support",     icon: "🚨", color: DANGER       },
-                ].map((c, i) => (
-                  <TouchableOpacity key={c.name} style={[s.contactItem, i > 0 && s.borderTop]} activeOpacity={0.7}>
-                    <View style={[s.contactAvatar, { backgroundColor: `${c.color}20` }]}>
-                      <Text style={{ fontSize: 18 }}>{c.icon}</Text>
-                    </View>
+                  <TouchableOpacity style={s.contactItem} activeOpacity={0.7} onPress={() => router.push("/renter/contact-ll")}>
+                    <View style={[s.contactAvatar, { backgroundColor: `${TEAL}20` }]}><Text style={{ fontSize: 18 }}>👤</Text></View>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.contactName}>{c.name}</Text>
-                      <Text style={s.contactRole}>{c.role}</Text>
+                      <Text style={s.contactName}>{lease?.landlord?.fullName ?? "Landlord"}</Text>
+                      <Text style={s.contactRole}>{lease?.landlord?.email ?? "Contact details unavailable"}</Text>
                     </View>
-                    <TouchableOpacity style={[s.msgIconBtn, { backgroundColor: `${c.color}18` }]} activeOpacity={0.7}>
-                      <Text style={{ fontSize: 15 }}>💬</Text>
-                    </TouchableOpacity>
+                    <Text style={{ color: TEAL }}>Message</Text>
                   </TouchableOpacity>
-                ))}
               </View>
             </FadeIn>
           </>

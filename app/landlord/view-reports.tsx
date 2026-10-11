@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Platform, StatusBar, useWindowDimensions,
+  Platform, StatusBar, useWindowDimensions, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
+import type { LandlordDashboardData } from "../../types/landlordDashboard";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -31,41 +35,7 @@ const WHITE_05     = "rgba(255,255,255,0.05)";
 const REPORT_TABS = ["Overview", "Revenue", "Tenants", "Maintenance"] as const;
 type ReportTab = typeof REPORT_TABS[number];
 
-// ── Mock data ──────────────────────────────────────────────────────────────────
-const MONTHLY_REVENUE = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-const MONTHS          = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-const OVERVIEW_KPIS = [
-  { label: "Total Revenue",    value: "--", change: "--", positive: true,  icon: "💷", color: SUCCESS      },
-  { label: "Avg Occupancy",    value: "--", change: "--", positive: true,  icon: "🏢", color: ACCENT_LIGHT },
-  { label: "Outstanding Rent", value: "--", change: "--", positive: false, icon: "⚠️", color: WARNING      },
-  { label: "Maintenance Cost", value: "--", change: "--", positive: false, icon: "🔧", color: DANGER       },
-];
-
-const TOP_PROPERTIES: { id: string; name: string; units: number; revenue: string; occupancy: number; trend: number }[] = [];
-
-const TENANT_STATS = [
-  { label: "Total Tenants",  value: "--", color: ACCENT_LIGHT },
-  { label: "Avg Tenure",     value: "--", color: PURPLE },
-  { label: "New This Month", value: "--", color: SUCCESS },
-  { label: "Leaving Soon",   value: "--", color: WARNING },
-];
-
-const PAYMENT_BREAKDOWN = [
-  { label: "Collected",  value: 0, color: SUCCESS },
-  { label: "Pending",    value: 0, color: WARNING },
-  { label: "Overdue",    value: 0, color: DANGER  },
-];
-
-const MAINT_BREAKDOWN = [
-  { label: "Resolved",    value: 0, color: SUCCESS      },
-  { label: "In Progress", value: 0, color: WARNING      },
-  { label: "Open",        value: 0, color: DANGER       },
-  { label: "Scheduled",   value: 0, color: ACCENT_LIGHT },
-];
-
-const MAINT_COST_MONTHS = ["Sep", "Oct", "Nov", "Dec"];
-const MAINT_COSTS       = [0, 0, 0, 0];
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(18);
@@ -143,7 +113,99 @@ export default function ViewReports() {
   const router    = useRouter();
   const insets    = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const { getToken } = useAuth();
   const [activeTab, setActiveTab] = useState<ReportTab>("Overview");
+  const [report, setReport] = useState<LandlordDashboardData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchReport = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) { setError("Not authenticated."); return; }
+      const response = await fetch(`${API_URL}/api/landlord/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        setError(json?.error?.message ?? "Failed to load reports.");
+        return;
+      }
+      setReport(json?.data ?? null);
+    } catch {
+      setError("Network error — is the server running?");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void fetchReport(); });
+
+  const metrics = report?.metrics;
+  const revenueHistory = metrics?.monthlyRevenueByMonth ?? [];
+  const monthlyRevenue = MONTHS.map((_, index) =>
+    revenueHistory.find((entry) => entry.month === index + 1)?.amount ?? 0
+  );
+  const annualRevenue = metrics?.annualRevenue ?? 0;
+  const paymentBreakdown = [
+    { label: "Collected", value: metrics?.rentCollection?.collected ?? 0, color: SUCCESS },
+    { label: "Pending", value: metrics?.rentCollection?.pending ?? 0, color: WARNING },
+    { label: "Overdue", value: metrics?.rentCollection?.overdue ?? 0, color: DANGER },
+  ];
+  const maintenanceRequests = report?.maintenanceRequests ?? [];
+  const maintenanceByCategory = maintenanceRequests.reduce<Record<string, number>>((counts, request) => {
+    counts[request.category] = (counts[request.category] ?? 0) + 1;
+    return counts;
+  }, {});
+  const maintenanceBreakdown = [
+    { label: "Resolved", value: metrics?.maintenanceCounts?.resolved ?? 0, color: SUCCESS },
+    { label: "In Progress", value: metrics?.maintenanceCounts?.inProgress ?? 0, color: WARNING },
+    { label: "Open", value: metrics?.maintenanceCounts?.open ?? 0, color: DANGER },
+  ];
+  const leases = report?.leases ?? [];
+  const now = new Date();
+  const tenantStats = [
+    { label: "Active Tenants", value: metrics?.activeTenantCount ?? 0, color: ACCENT_LIGHT },
+    { label: "Avg Tenure", value: leases.length
+      ? `${Math.round(leases.reduce((sum, lease) => sum + Math.max(0, (now.getTime() - new Date(lease.leaseStart).getTime()) / 2.628e9), 0) / leases.length)} mo`
+      : "0 mo", color: PURPLE },
+    { label: "New This Month", value: leases.filter((lease) => {
+      const created = new Date(lease.createdAt);
+      return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
+    }).length, color: SUCCESS },
+    { label: "Leaving Soon", value: leases.filter((lease) => {
+      const daysRemaining = (new Date(lease.leaseEnd).getTime() - now.getTime()) / 86400000;
+      return daysRemaining >= 0 && daysRemaining <= 180;
+    }).length, color: WARNING },
+  ];
+  const topProperties = (report?.properties ?? []).map((property) => {
+    const propertyLeaseIds = leases.filter((lease) => {
+      const leasePropertyId = typeof lease.property === "string" ? lease.property : lease.property?._id;
+      return leasePropertyId === property._id;
+    })
+      .map((lease) => String(lease._id));
+    const propertyPaid = (report?.payments ?? [])
+      .filter((payment) => payment.status === "PAID"
+        && new Date(payment.paidAt ?? payment.createdAt).getFullYear() === now.getFullYear()
+        && propertyLeaseIds.includes(String(payment.lease)))
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    return {
+      id: String(property._id),
+      name: property.name,
+      units: 1,
+      revenue: `₹${propertyPaid.toLocaleString("en-IN")}`,
+      occupancy: property.status === "OCCUPIED" ? 100 : 0,
+      trend: 0,
+    };
+  });
+  const overviewKpis = [
+    { label: "Collected This Year", value: `₹${annualRevenue.toLocaleString("en-IN")}`, change: "YTD", positive: true, icon: "₹", color: SUCCESS },
+    { label: "Occupancy", value: `${metrics?.occupancyPercentage ?? 0}%`, change: `${metrics?.occupiedProperties ?? 0}/${metrics?.propertyCount ?? 0}`, positive: true, icon: "🏢", color: ACCENT_LIGHT },
+    { label: "Outstanding Rent", value: `₹${((metrics?.rentCollection?.pending ?? 0) + (metrics?.rentCollection?.overdue ?? 0)).toLocaleString("en-IN")}`, change: "This month", positive: false, icon: "⚠️", color: WARNING },
+    { label: "Maintenance Cost", value: "Not tracked", change: "", positive: false, icon: "🔧", color: DANGER },
+  ];
 
   const paddingTop = Platform.OS === "android"
     ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32)
@@ -189,14 +251,17 @@ export default function ViewReports() {
         style={s.body}
         contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 24, 40) }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { void fetchReport(); }} tintColor={ACCENT_LIGHT} />}
       >
+        {error ? <Text style={{ color: DANGER, textAlign: "center" }}>{error}</Text> : null}
+        {loading && !report ? <ActivityIndicator color={ACCENT_LIGHT} /> : null}
 
         {/* ══ OVERVIEW ══ */}
         {activeTab === "Overview" && (
           <>
             <FadeIn delay={0}>
               <View style={s.kpiGrid}>
-                {OVERVIEW_KPIS.map((k) => (
+                {overviewKpis.map((k) => (
                   <View key={k.label} style={s.kpiCard}>
                     <View style={s.kpiTop}>
                       <Text style={s.kpiIcon}>{k.icon}</Text>
@@ -214,30 +279,30 @@ export default function ViewReports() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Annual Revenue" action="YTD" />
-                <Text style={s.bigVal}>--</Text>
-                <Text style={s.cardSub}>No revenue data yet</Text>
+                <Text style={s.bigVal}>{loading && !report ? "Loading…" : `₹${annualRevenue.toLocaleString("en-IN")}`}</Text>
+                <Text style={s.cardSub}>Recorded payments collected this year</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="Top Properties" action="See all" />
-                {TOP_PROPERTIES.length === 0 ? (
+                {topProperties.length === 0 ? (
                   <View style={{ paddingVertical: 16, alignItems: "center" }}>
                     <Text style={{ color: WHITE_40, fontSize: 13 }}>No properties added yet</Text>
                   </View>
-                ) : TOP_PROPERTIES.map((p, i) => (
+                ) : topProperties.map((p, i) => (
                   <TouchableOpacity key={p.id} style={[s.propRow, i > 0 && s.borderTop]} activeOpacity={0.7}>
                     <View style={s.propLeft}>
                       <View style={s.propIconBox}><Text style={{ fontSize: 16 }}>🏢</Text></View>
                       <View style={{ flex: 1 }}>
                         <Text style={s.propName}>{p.name}</Text>
-                        <Text style={s.propSub}>{p.units} units · {p.revenue}/mo</Text>
+                        <Text style={s.propSub}>Collected YTD: {p.revenue}</Text>
                       </View>
                     </View>
                     <View style={s.propRight}>
                       <Text style={[s.propOcc, { color: p.occupancy === 100 ? SUCCESS : p.occupancy >= 75 ? WARNING : DANGER }]}>{p.occupancy}%</Text>
-                      <Text style={[s.propTrend, { color: p.trend > 0 ? SUCCESS : DANGER }]}>{p.trend > 0 ? "+" : ""}{p.trend}%</Text>
+                      <Text style={[s.propTrend, { color: p.occupancy === 100 ? SUCCESS : DANGER }]}>{p.occupancy ? "Occupied" : "Vacant"}</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
@@ -248,19 +313,19 @@ export default function ViewReports() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Occupancy</Text>
-                  <Text style={[s.bigVal, { marginTop: 10 }]}>--%</Text>
-                  <Text style={s.cardSub}>No data yet</Text>
+                  <Text style={[s.bigVal, { marginTop: 10 }]}>{metrics?.occupancyPercentage ?? 0}%</Text>
+                  <Text style={s.cardSub}>{metrics?.occupiedProperties ?? 0} of {metrics?.propertyCount ?? 0} properties occupied</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Rent</Text>
                   <View style={{ gap: 8, marginTop: 10 }}>
-                    {PAYMENT_BREAKDOWN.map((p) => (
+                    {paymentBreakdown.map((p) => (
                       <View key={p.label} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.color }} />
                           <Text style={{ fontSize: 11, color: WHITE_72 }}>{p.label}</Text>
                         </View>
-                        <Text style={{ fontSize: 13, fontWeight: "700", color: p.color }}>{p.value}</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: p.color }}>₹{p.value.toLocaleString("en-IN")}</Text>
                       </View>
                     ))}
                   </View>
@@ -276,17 +341,26 @@ export default function ViewReports() {
             <FadeIn delay={0}>
               <View style={s.card}>
                 <SectionHeader title="Revenue This Year" />
-                <Text style={s.bigVal}>--</Text>
-                <Text style={s.cardSub}>No revenue data yet</Text>
+                <Text style={s.bigVal}>₹{annualRevenue.toLocaleString("en-IN")}</Text>
+                <Text style={s.cardSub}>Recorded payments collected this year</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Monthly Breakdown" />
-                <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No monthly data yet</Text>
-                </View>
+                {monthlyRevenue.map((amount, i) => {
+                  const max = Math.max(...monthlyRevenue, 1);
+                  return (
+                    <View key={MONTHS[i]} style={s.revRow}>
+                      <Text style={s.revMonth}>{MONTHS[i]}</Text>
+                      <View style={s.revBarWrap}>
+                        <View style={[s.revBar, { width: `${Math.round((amount / max) * 100)}%`, backgroundColor: ACCENT_LIGHT }]} />
+                      </View>
+                      <Text style={s.revVal}>₹{amount.toLocaleString("en-IN")}</Text>
+                    </View>
+                  );
+                })}
               </View>
             </FadeIn>
 
@@ -294,13 +368,13 @@ export default function ViewReports() {
               <View style={s.twoCol}>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Avg Monthly</Text>
-                  <Text style={[s.bigVal, { fontSize: 20 }]}>--</Text>
-                  <Text style={s.cardSub}>Per month</Text>
+                  <Text style={[s.bigVal, { fontSize: 20 }]}>₹{Math.round(annualRevenue / Math.max(now.getMonth() + 1, 1)).toLocaleString("en-IN")}</Text>
+                  <Text style={s.cardSub}>Monthly average this year</Text>
                 </View>
                 <View style={[s.card, s.half]}>
                   <Text style={s.cardTitle}>Best Month</Text>
-                  <Text style={[s.bigVal, { fontSize: 20, color: SUCCESS }]}>--</Text>
-                  <Text style={s.cardSub}>No data yet</Text>
+                  <Text style={[s.bigVal, { fontSize: 20, color: SUCCESS }]}>₹{Math.max(...monthlyRevenue).toLocaleString("en-IN")}</Text>
+                  <Text style={s.cardSub}>{MONTHS[monthlyRevenue.indexOf(Math.max(...monthlyRevenue))]} collected</Text>
                 </View>
               </View>
             </FadeIn>
@@ -312,7 +386,7 @@ export default function ViewReports() {
           <>
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
-                {TENANT_STATS.map((k) => (
+                {tenantStats.map((k) => (
                   <View key={k.label} style={[s.kpiCard2, { borderColor: `${k.color}30` }]}>
                     <Text style={[s.kpiVal2, { color: k.color }]}>{k.value}</Text>
                     <Text style={s.kpiLbl}>{k.label}</Text>
@@ -325,17 +399,26 @@ export default function ViewReports() {
               <View style={s.card}>
                 <SectionHeader title="Payment Status" />
                 <View style={s.rentRow}>
-                  {PAYMENT_BREAKDOWN.map((p) => (
+                  {paymentBreakdown.map((p) => (
                     <View key={p.label} style={s.rentStat}>
-                      <Text style={[s.rentVal, { color: p.color }]}>{p.value}</Text>
+                      <Text style={[s.rentVal, { color: p.color, fontSize: 16 }]}>₹{p.value.toLocaleString("en-IN")}</Text>
                       <Text style={s.rentLbl}>{p.label}</Text>
                     </View>
                   ))}
                 </View>
                 <View style={s.progTrack}>
-                  <View style={[s.progFill, { width: "0%", backgroundColor: SUCCESS }]} />
+                  <View style={[s.progFill, {
+                    width: `${metrics?.rentCollection?.expected
+                      ? Math.min(100, Math.round((metrics.rentCollection.collected / metrics.rentCollection.expected) * 100))
+                      : 0}%`,
+                    backgroundColor: SUCCESS,
+                  }]} />
                 </View>
-                <Text style={s.progLbl}>No payment data yet</Text>
+                <Text style={s.progLbl}>
+                  {metrics?.rentCollection?.expected
+                    ? `${Math.min(100, Math.round((metrics.rentCollection.collected / metrics.rentCollection.expected) * 100))}% rent collected this month`
+                    : "No rent currently due"}
+                </Text>
               </View>
             </FadeIn>
 
@@ -343,19 +426,25 @@ export default function ViewReports() {
               <View style={s.card}>
                 <SectionHeader title="Lease Expiry Forecast" action="6 months" />
                 {[
-                  { period: "This Month",     count: 0, color: SUCCESS },
-                  { period: "Next Month",     count: 0, color: WARNING },
-                  { period: "In 2–3 Months",  count: 0, color: WARNING },
-                  { period: "In 4–6 Months",  count: 0, color: ACCENT_LIGHT },
-                ].map((e, i) => (
+                  { period: "This Month", start: 0, end: 1, color: SUCCESS },
+                  { period: "Next Month", start: 1, end: 2, color: WARNING },
+                  { period: "In 2–3 Months", start: 2, end: 4, color: WARNING },
+                  { period: "In 4–6 Months", start: 4, end: 7, color: ACCENT_LIGHT },
+                ].map((e, i) => {
+                  const count = leases.filter((lease) => {
+                    const monthsUntilEnd = (new Date(lease.leaseEnd).getTime() - now.getTime()) / 2.628e9;
+                    return monthsUntilEnd >= e.start && monthsUntilEnd < e.end;
+                  }).length;
+                  return (
                   <View key={e.period} style={[s.expiryRow, i > 0 && s.borderTop]}>
                     <View style={[s.expiryDot, { backgroundColor: e.color }]} />
                     <Text style={s.expiryPeriod}>{e.period}</Text>
                     <View style={[s.expiryBadge, { backgroundColor: `${e.color}20` }]}>
-                      <Text style={[s.expiryCount, { color: e.color }]}>{e.count} lease{e.count !== 1 ? "s" : ""}</Text>
+                      <Text style={[s.expiryCount, { color: e.color }]}>{count} lease{count !== 1 ? "s" : ""}</Text>
                     </View>
                   </View>
-                ))}
+                  );
+                })}
               </View>
             </FadeIn>
           </>
@@ -366,7 +455,7 @@ export default function ViewReports() {
           <>
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
-                {MAINT_BREAKDOWN.map((k) => (
+                {maintenanceBreakdown.map((k) => (
                   <View key={k.label} style={[s.kpiCard2, { borderColor: `${k.color}30` }]}>
                     <Text style={[s.kpiVal2, { color: k.color }]}>{k.value}</Text>
                     <Text style={s.kpiLbl}>{k.label}</Text>
@@ -378,17 +467,22 @@ export default function ViewReports() {
             <FadeIn delay={80}>
               <View style={s.card}>
                 <SectionHeader title="Maintenance Cost" />
-                <Text style={s.bigVal}>--</Text>
-                <Text style={s.cardSub}>No maintenance cost data yet</Text>
+                <Text style={s.bigVal}>Not tracked</Text>
+                <Text style={s.cardSub}>Maintenance requests do not currently record costs.</Text>
               </View>
             </FadeIn>
 
             <FadeIn delay={160}>
               <View style={s.card}>
                 <SectionHeader title="By Category" />
-                <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                  <Text style={{ color: WHITE_40, fontSize: 13 }}>No category data yet</Text>
-                </View>
+                {maintenanceRequests.length === 0
+                  ? <View style={{ paddingVertical: 16, alignItems: "center" }}><Text style={{ color: WHITE_40, fontSize: 13 }}>No maintenance requests recorded.</Text></View>
+                  : Object.entries(maintenanceByCategory).map(([category, count]) => (
+                    <View key={category} style={s.expiryRow}>
+                      <Text style={s.expiryPeriod}>{category}</Text>
+                      <Text style={s.expiryCount}>{count} request{count !== 1 ? "s" : ""}</Text>
+                    </View>
+                  ))}
               </View>
             </FadeIn>
           </>

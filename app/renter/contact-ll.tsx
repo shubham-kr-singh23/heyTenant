@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView, Linking,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -27,18 +30,7 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-const QUICK_CONTACTS = [
-  { id: "ll",    name: "Your Landlord",    role: "Landlord",          phone: null as string | null, email: null as string | null,   icon: "👤", color: TEAL         },
-  { id: "pm",    name: "Property Manager", role: "Management Office",  phone: null as string | null, email: null as string | null,   icon: "🏢", color: ACCENT_LIGHT },
-  { id: "maint", name: "Maintenance Team", role: "Repairs & Service",  phone: null as string | null, email: null as string | null,   icon: "🔧", color: WARNING      },
-  { id: "em",    name: "Emergency Line",   role: "24/7 Urgent Issues", phone: "0800 123 456",        email: null,                    icon: "🚨", color: DANGER       },
-];
-
-const OFFICE_HOURS = [
-  { day: "Monday – Friday", hours: "9:00 AM – 5:30 PM" },
-  { day: "Saturday",        hours: "10:00 AM – 2:00 PM" },
-  { day: "Sunday",          hours: "Closed" },
-];
+type LeaseRecord = { property?: { name?: string }; landlord?: { fullName?: string; email?: string } };
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(16);
@@ -51,26 +43,65 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 
 export default function ContactLL() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const pt = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
   const [subject, setSubject] = useState("");
   const [body,    setBody]    = useState("");
-  const [to,      setTo]      = useState("ll");
   const [sending, setSending] = useState(false);
   const [sent,    setSent]    = useState(false);
+  const [lease,   setLease]   = useState<LeaseRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [sendError, setSendError] = useState("");
   const [subF,    setSF]      = useState(false);
   const [bodyF,   setBF]      = useState(false);
 
-  const currentContact = QUICK_CONTACTS.find(c => c.id === to)!;
+  const currentContact = { name: lease?.landlord?.fullName ?? "Landlord", color: TEAL, icon: "👤" };
+
+  const loadLease = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/renter/lease`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not load landlord details.");
+      setLease(json?.data ?? null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load landlord details.");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void loadLease(); });
 
   const send = async () => {
-    if (!subject.trim() || !body.trim()) return;
+    if (!subject.trim() || !body.trim() || !lease) return;
     setSending(true);
-    await new Promise(r => setTimeout(r, 900));
-    setSent(true);
-    await new Promise(r => setTimeout(r, 700));
-    router.back();
+    setSendError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/renter/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ subject: subject.trim(), body: body.trim() }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not send message.");
+      setSent(true);
+      router.back();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not send message.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -88,6 +119,7 @@ export default function ContactLL() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          {loadError ? <Text style={{ color: DANGER }}>{loadError}</Text> : null}
 
           {/* Landlord profile card */}
           <FadeIn delay={0}>
@@ -95,25 +127,12 @@ export default function ContactLL() {
               <View style={s.profileRow}>
                 <View style={s.profileAvatar}><Text style={s.profileAvatarTxt}>LL</Text></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.profileName}>Your Landlord</Text>
-                  <Text style={s.profileRole}>Landlord</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 }}>
-                    <View style={s.onlineDot} /><Text style={s.onlineTxt}>Online now</Text>
-                  </View>
-                </View>
-                <View style={s.profileActions}>
-                  <TouchableOpacity style={[s.profileActionBtn, { backgroundColor: TEAL_BG }]} activeOpacity={0.7}>
-                    <Text style={{ fontSize: 18 }}>📞</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.profileActionBtn, { backgroundColor: `${ACCENT_LIGHT}15` }]} activeOpacity={0.7}>
-                    <Text style={{ fontSize: 18 }}>💬</Text>
-                  </TouchableOpacity>
+                  <Text style={s.profileName}>{loading ? "Loading landlord…" : lease?.landlord?.fullName ?? "Landlord"}</Text>
+                  <Text style={s.profileRole}>{lease?.property?.name ?? "Current tenancy"}</Text>
                 </View>
               </View>
               <View style={s.profileDetails}>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>📞</Text><Text style={s.profileDetailTxt}>--</Text></View>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>✉️</Text><Text style={s.profileDetailTxt}>--</Text></View>
-                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>🏠</Text><Text style={s.profileDetailTxt}>--</Text></View>
+                <View style={s.profileDetailRow}><Text style={s.profileDetailIcon}>✉️</Text><Text style={s.profileDetailTxt}>{lease?.landlord?.email ?? "Email unavailable"}</Text></View>
               </View>
             </View>
           </FadeIn>
@@ -122,31 +141,9 @@ export default function ContactLL() {
           <FadeIn delay={70}>
             <View style={s.card}>
               <Text style={s.cardTitle}>Contact Directory</Text>
-              {QUICK_CONTACTS.map((c, i) => (
-                <View key={c.id} style={[s.contactRow, i > 0 && s.bt]}>
-                  <View style={[s.contactAvatar, { backgroundColor: `${c.color}20` }]}>
-                    <Text style={{ fontSize: 18 }}>{c.icon}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.contactName}>{c.name}</Text>
-                    <Text style={s.contactRole}>{c.role}</Text>
-                  </View>
-                  <View style={{ flexDirection: "row", gap: 6 }}>
-                    {c.phone && (
-                      <TouchableOpacity style={[s.contactBtn, { backgroundColor: `${c.color}18` }]} activeOpacity={0.7}
-                        onPress={() => Linking.openURL(`tel:${c.phone}`)}>
-                        <Text style={{ fontSize: 14 }}>📞</Text>
-                      </TouchableOpacity>
-                    )}
-                    {c.email && (
-                      <TouchableOpacity style={[s.contactBtn, { backgroundColor: `${c.color}12` }]} activeOpacity={0.7}
-                        onPress={() => Linking.openURL(`mailto:${c.email}`)}>
-                        <Text style={{ fontSize: 14 }}>✉️</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              ))}
+              <Text style={s.contactRole}>
+                Messages are saved to your tenancy so you and your landlord can refer to the conversation later.
+              </Text>
             </View>
           </FadeIn>
 
@@ -164,13 +161,7 @@ export default function ContactLL() {
               {/* Recipient */}
               <Text style={s.fieldLbl}>Send To</Text>
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 14 }}>
-                {QUICK_CONTACTS.filter(c => c.id !== "em").map(c => (
-                  <TouchableOpacity key={c.id} onPress={() => setTo(c.id)} activeOpacity={0.75}
-                    style={[s.toChip, to === c.id && { borderColor: c.color, backgroundColor: `${c.color}18` }]}>
-                    <Text style={{ fontSize: 13 }}>{c.icon}</Text>
-                    <Text style={[s.toChipTxt, to === c.id && { color: c.color }]}>{c.name.split(" ")[0]}</Text>
-                  </TouchableOpacity>
-                ))}
+                <Text style={s.contactRole}>{currentContact.name} · {lease?.landlord?.email ?? "Email unavailable"}</Text>
               </View>
 
               <Text style={s.fieldLbl}>Subject</Text>
@@ -193,57 +184,13 @@ export default function ContactLL() {
               <Text style={{ fontSize: 10, color: WHITE_40, textAlign: "right", marginTop: 4 }}>{body.length} characters</Text>
 
               <TouchableOpacity
-                style={[s.sendBtn, { backgroundColor: currentContact.color }, (!subject.trim() || !body.trim() || sending || sent) && { opacity: 0.6 }]}
-                onPress={send} activeOpacity={0.85}
-                disabled={!subject.trim() || !body.trim() || sending || sent}
+                style={[s.sendBtn, { backgroundColor: currentContact.color }, (!subject.trim() || !body.trim() || sending || sent || loading || !lease) && { opacity: 0.6 }]}
+                onPress={() => { void send(); }} activeOpacity={0.85}
+                disabled={!subject.trim() || !body.trim() || sending || sent || loading || !lease}
               >
                 <Text style={s.sendTxt}>{sent ? "Sent ✓" : sending ? "Sending…" : "Send Message  →"}</Text>
               </TouchableOpacity>
-            </View>
-          </FadeIn>
-
-          {/* Office hours */}
-          <FadeIn delay={210}>
-            <View style={s.card}>
-              <Text style={s.cardTitle}>Office Hours</Text>
-              {OFFICE_HOURS.map((h, i) => (
-                <View key={h.day} style={[s.hoursRow, i > 0 && s.bt]}>
-                  <Text style={s.hoursDay}>{h.day}</Text>
-                  <Text style={[s.hoursTime, h.hours === "Closed" && { color: DANGER }]}>{h.hours}</Text>
-                </View>
-              ))}
-              <View style={[s.emergencyBanner, { marginTop: 14 }]}>
-                <Text style={{ fontSize: 16 }}>🚨</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.emergencyTitle}>Outside Office Hours?</Text>
-                  <Text style={s.emergencyBody}>For genuine emergencies (flooding, gas leak, security breach) call the 24/7 line.</Text>
-                </View>
-                <TouchableOpacity style={s.emergCallBtn} activeOpacity={0.8}
-                  onPress={() => Linking.openURL("tel:0800123456")}>
-                  <Text style={s.emergCallTxt}>Call</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </FadeIn>
-
-          {/* Complaint/dispute */}
-          <FadeIn delay={270}>
-            <View style={[s.card, { borderColor: `${PURPLE}25` }]}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <Text style={{ fontSize: 20 }}>⚖️</Text>
-                <Text style={s.cardTitle}>Complaint or Dispute?</Text>
-              </View>
-              <Text style={{ fontSize: 12, color: WHITE_72, lineHeight: 18, marginBottom: 12 }}>
-                If your issue remains unresolved after contacting your landlord, you can escalate to an independent redress scheme or contact Shelter for free housing advice.
-              </Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <TouchableOpacity style={[s.disputeBtn, { backgroundColor: PURPLE_BG, borderColor: `${PURPLE}30` }]} activeOpacity={0.8}>
-                  <Text style={[s.disputeTxt, { color: PURPLE }]}>Redress Scheme</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.disputeBtn, { backgroundColor: TEAL_BG, borderColor: `${TEAL}30` }]} activeOpacity={0.8}>
-                  <Text style={[s.disputeTxt, { color: TEAL }]}>Shelter Advice</Text>
-                </TouchableOpacity>
-              </View>
+              {sendError ? <Text style={{ color: DANGER, marginTop: 10 }}>{sendError}</Text> : null}
             </View>
           </FadeIn>
 

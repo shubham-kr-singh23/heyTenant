@@ -1,11 +1,14 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -24,17 +27,10 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-const CONTACTS = [
-  { id: "pm",  name: "Property Manager", role: "Management Office", icon: "🏢", color: ACCENT_LIGHT, online: false },
-  { id: "ll",  name: "Landlord",         role: "Landlord",          icon: "👤", color: TEAL,         online: false },
-  { id: "mt",  name: "Maintenance Team", role: "Repairs & Service", icon: "🔧", color: WARNING,      online: false },
-  { id: "em",  name: "Emergency Line",   role: "24/7 Support",      icon: "🚨", color: DANGER,       online: true  },
-];
+type MessageRecord = { _id: string; body: string; subject?: string; senderRole: "LANDLORD" | "RENTER"; createdAt: string };
+type LeaseRecord = { landlord?: { fullName?: string; email?: string } };
 
-type Msg = { id: string; text: string; mine: boolean; time: string };
-const SEED: Record<string, Msg[]> = {
-  pm: [], ll: [], mt: [], em: [],
-};
+const LANDLORD_CONTACT = { id: "landlord", icon: "👤", color: TEAL };
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
   const op = useSharedValue(0); const ty = useSharedValue(16);
@@ -47,24 +43,76 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 
 export default function Messages() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const pt = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
   const [thread,  setThread]  = useState<string | null>(null);
-  const [threads, setThreads] = useState(SEED);
+  const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [lease, setLease] = useState<LeaseRecord | null>(null);
   const [draft,   setDraft]   = useState("");
   const [iF,      setIF]      = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
   const scrollRef = useRef<ScrollView>(null);
 
-  const contact  = CONTACTS.find(c => c.id === thread);
-  const messages = thread ? (threads[thread] ?? []) : [];
+  const contact = thread ? {
+    ...LANDLORD_CONTACT,
+    name: lease?.landlord?.fullName ?? "Landlord",
+    email: lease?.landlord?.email,
+  } : null;
 
-  const send = () => {
-    if (!draft.trim() || !thread) return;
-    const m: Msg = { id: Date.now().toString(), text: draft.trim(), mine: true, time: "Just now" };
-    setThreads(p => ({ ...p, [thread]: [...(p[thread] ?? []), m] }));
-    setDraft("");
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+  const loadMessages = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const headers = { Authorization: `Bearer ${token}` };
+      const [leaseResponse, messageResponse] = await Promise.all([
+        fetch(`${API_URL}/api/renter/lease`, { headers }),
+        fetch(`${API_URL}/api/renter/messages`, { headers }),
+      ]);
+      const [leaseJson, messageJson] = await Promise.all([leaseResponse.json(), messageResponse.json()]);
+      if (!leaseResponse.ok && leaseResponse.status !== 404) {
+        throw new Error(leaseJson?.error?.message ?? "Could not load your lease.");
+      }
+      if (!messageResponse.ok && !(messageResponse.status === 404 && leaseResponse.status === 404)) {
+        throw new Error(messageJson?.error?.message ?? "Could not load messages.");
+      }
+      setLease(leaseResponse.ok ? leaseJson?.data ?? null : null);
+      setMessages(messageResponse.ok ? messageJson?.data ?? [] : []);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load messages.");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void loadMessages(); });
+
+  const send = async () => {
+    if (!draft.trim() || !thread || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated.");
+      const response = await fetch(`${API_URL}/api/renter/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ body: draft.trim() }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not send message.");
+      setMessages((previous) => [...previous, json.data]);
+      setDraft("");
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Could not send message.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
@@ -79,18 +127,15 @@ export default function Messages() {
         <TouchableOpacity onPress={() => setThread(null)} style={s.backBtn} activeOpacity={0.7}><Text style={s.backArrow}>‹</Text></TouchableOpacity>
         <View style={[s.thAvatar, { backgroundColor: `${contact.color}22` }]}><Text style={{ fontSize: 18 }}>{contact.icon}</Text></View>
         <View style={{ flex: 1 }}>
-          <Text style={s.thName}>{contact.name}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 1 }}>
-            <View style={[s.onlineDot, { backgroundColor: contact.online ? SUCCESS : WHITE_40 }]} />
-            <Text style={s.onlineTxt}>{contact.online ? "Online" : "Offline"}</Text>
-          </View>
+        <Text style={s.thName}>{contact.name}</Text>
+        <Text style={s.onlineTxt}>{contact.email ?? "Your landlord"}</Text>
         </View>
-        <TouchableOpacity style={s.callBtn} activeOpacity={0.7}><Text style={{ fontSize: 18 }}>📞</Text></TouchableOpacity>
       </View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-          {messages.length === 0 ? (
+          {error ? <Text style={{ color: DANGER, textAlign: "center", marginTop: 10 }}>{error}</Text> : null}
+          {loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : messages.length === 0 ? (
             <View style={{ alignItems: "center", paddingTop: 60 }}>
               <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
               <Text style={{ fontSize: 15, color: WHITE_40 }}>No messages yet.</Text>
@@ -98,16 +143,17 @@ export default function Messages() {
             </View>
           ) : (
             messages.map((m, i) => (
-              <View key={m.id} style={[m.mine ? s.bubbleMine : s.bubbleTheirs, { marginTop: i > 0 && messages[i - 1].mine === m.mine ? 3 : 12 }]}>
-                <Text style={{ fontSize: 14, lineHeight: 20, color: m.mine ? WHITE : WHITE_90 }}>{m.text}</Text>
-                <Text style={{ fontSize: 10, color: WHITE_40, marginTop: 4, textAlign: m.mine ? "right" : "left" }}>{m.time}</Text>
+              <View key={m._id} style={[m.senderRole === "RENTER" ? s.bubbleMine : s.bubbleTheirs, { marginTop: i > 0 && messages[i - 1].senderRole === m.senderRole ? 3 : 12 }]}>
+                {m.subject ? <Text style={{ fontSize: 12, fontWeight: "700", color: WHITE, marginBottom: 5 }}>{m.subject}</Text> : null}
+                <Text style={{ fontSize: 14, lineHeight: 20, color: m.senderRole === "RENTER" ? WHITE : WHITE_90 }}>{m.body}</Text>
+                <Text style={{ fontSize: 10, color: WHITE_40, marginTop: 4, textAlign: m.senderRole === "RENTER" ? "right" : "left" }}>{new Date(m.createdAt).toLocaleString("en-IN")}</Text>
               </View>
             ))
           )}
         </ScrollView>
         <View style={[s.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput style={[s.msgInput, iF && s.msgInputF]} placeholder="Type a message…" placeholderTextColor="rgba(255,255,255,0.3)" value={draft} onChangeText={setDraft} multiline onFocus={() => setIF(true)} onBlur={() => setIF(false)} />
-          <TouchableOpacity style={[s.sendBtn, { backgroundColor: draft.trim() ? TEAL : WHITE_08 }]} onPress={send} activeOpacity={0.85} disabled={!draft.trim()}>
+          <TouchableOpacity style={[s.sendBtn, { backgroundColor: draft.trim() ? TEAL : WHITE_08 }]} onPress={() => { void send(); }} activeOpacity={0.85} disabled={!draft.trim() || sending || !lease}>
             <Text style={{ fontSize: 26, fontWeight: "700", lineHeight: 30, color: draft.trim() ? WHITE : WHITE_40 }}>›</Text>
           </TouchableOpacity>
         </View>
@@ -130,42 +176,22 @@ export default function Messages() {
         <FadeIn delay={0}>
           <View style={s.card}>
             <Text style={s.cardTitle}>Conversations</Text>
-            {CONTACTS.map((c, i) => {
-              const msgs = threads[c.id] ?? [];
-              const last = msgs[msgs.length - 1];
-              const unread = c.id === "pm" || c.id === "ll";
-              return (
-                <TouchableOpacity key={c.id} onPress={() => setThread(c.id)} activeOpacity={0.75} style={[s.inboxRow, i > 0 && s.bt]}>
-                  <View style={{ position: "relative", flexShrink: 0 }}>
-                    <View style={[s.inboxAvatar, { backgroundColor: `${c.color}20` }]}><Text style={{ fontSize: 20 }}>{c.icon}</Text></View>
-                    {c.online && <View style={s.onlineBadge} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                      <Text style={[s.inboxName, unread && { color: WHITE }]}>{c.name}</Text>
-                      <Text style={{ fontSize: 10, color: WHITE_40 }}>{last?.time ?? ""}</Text>
-                    </View>
-                    <Text style={{ fontSize: 11, color: WHITE_40, marginBottom: 3 }}>{c.role}</Text>
-                    {last ? <Text style={[s.inboxPreview, unread && { color: WHITE_72 }]} numberOfLines={1}>{last.mine ? "You: " : ""}{last.text}</Text>
-                      : <Text style={s.inboxPreview}>Tap to start a conversation</Text>}
-                  </View>
-                  {unread && <View style={s.unreadDot} />}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </FadeIn>
-        <FadeIn delay={80}>
-          <View style={[s.card, { borderColor: `${DANGER}30` }]}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 }}>
-              <Text style={{ fontSize: 24 }}>🚨</Text>
-              <View style={{ flex: 1 }}><Text style={{ fontSize: 15, fontWeight: "700", color: WHITE }}>Emergency?</Text><Text style={{ fontSize: 11, color: WHITE_40, marginTop: 1 }}>24/7 support always available</Text></View>
-            </View>
-            <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
-              <TouchableOpacity style={[s.emergBtn, { backgroundColor: DANGER_BG, borderColor: `${DANGER}30` }]} activeOpacity={0.8}><Text style={[s.emergTxt, { color: DANGER }]}>📞 Call Now</Text></TouchableOpacity>
-              <TouchableOpacity style={[s.emergBtn, { backgroundColor: WARNING_BG, borderColor: `${WARNING}30` }]} activeOpacity={0.8}><Text style={[s.emergTxt, { color: WARNING }]}>💬 Text Now</Text></TouchableOpacity>
-            </View>
-            <Text style={{ fontSize: 13, fontWeight: "600", color: WHITE_72, textAlign: "center" }}>Emergency: 0800 123 456</Text>
+            {error ? <Text style={{ color: DANGER }}>{error}</Text> : loading ? <ActivityIndicator color={ACCENT_LIGHT} /> : !lease ? (
+              <Text style={{ color: WHITE_40 }}>A landlord conversation is available after an active lease is assigned.</Text>
+            ) : (
+              <TouchableOpacity onPress={() => setThread(LANDLORD_CONTACT.id)} activeOpacity={0.75} style={s.inboxRow}>
+                <View style={[s.inboxAvatar, { backgroundColor: `${LANDLORD_CONTACT.color}20` }]}>
+                  <Text style={{ fontSize: 20 }}>{LANDLORD_CONTACT.icon}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.inboxName}>{lease.landlord?.fullName ?? "Landlord"}</Text>
+                  <Text style={s.inboxPreview} numberOfLines={1}>
+                    {messages.length ? messages[messages.length - 1].body : "Tap to start a conversation"}
+                  </Text>
+                </View>
+                {messages.length > 0 ? <Text style={{ fontSize: 10, color: WHITE_40 }}>{new Date(messages[messages.length - 1].createdAt).toLocaleDateString("en-IN")}</Text> : null}
+              </TouchableOpacity>
+            )}
           </View>
         </FadeIn>
       </ScrollView>

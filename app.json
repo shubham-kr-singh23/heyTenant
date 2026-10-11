@@ -39,7 +39,8 @@
             "backgroundColor": "#1A3C5E"
           }
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

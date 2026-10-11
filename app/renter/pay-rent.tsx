@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withDelay, withSpring, Easing,
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
@@ -17,6 +20,7 @@ const ACCENT_LIGHT = "#4A90D9";
 const SUCCESS      = "#22C55E";
 const SUCCESS_BG   = "rgba(34,197,94,0.12)";
 const WARNING      = "#F59E0B";
+const WARNING_BG   = "rgba(245,158,11,0.12)";
 const DANGER       = "#F87171";
 const DANGER_BG    = "rgba(248,113,113,0.12)";
 const WHITE        = "#FFFFFF";
@@ -27,16 +31,17 @@ const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
 const PAYMENT_METHODS = [
-  { id: "bank",  label: "Bank Transfer",  icon: "🏦", sub: "Instant · No fee"         },
-  { id: "card",  label: "Debit / Credit", icon: "💳", sub: "Instant · 1.5% fee"        },
-  { id: "bacs",  label: "Direct Debit",   icon: "🔄", sub: "1–3 days · No fee"          },
-  { id: "open",  label: "Open Banking",   icon: "🔐", sub: "Instant · No fee · Secure"  },
+  { id: "bank",  label: "Bank Transfer",  icon: "🏦", sub: "Record an external transfer" },
+  { id: "card",  label: "Debit / Credit", icon: "💳", sub: "Record an external card payment" },
+  { id: "bacs",  label: "Direct Debit",   icon: "🔄", sub: "Record an external debit" },
+  { id: "open",  label: "Open Banking",   icon: "🔐", sub: "Record an external payment" },
 ];
 
-const PAYMENT_HISTORY: { id: string; month: string; amount: string; date: string; status: string }[] = [];
+type LeaseData = { _id: string; monthlyRent: number };
+type PaymentData = { _id: string; amount: number; status: string; period?: string; paidAt?: string; createdAt: string };
 
 function scColor(s: string) {
-  return s === "Paid" ? SUCCESS : s === "Late" ? DANGER : WARNING;
+  return s === "PAID" ? SUCCESS : s === "LATE" ? DANGER : WARNING;
 }
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
@@ -50,6 +55,7 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 
 export default function PayRent() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const pt = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
@@ -63,6 +69,52 @@ export default function PayRent() {
   const cur    = PAYMENT_METHODS.find(m => m.id === method)!;
 
   const [payError, setPayError] = useState<string | null>(null);
+  const [lease, setLease] = useState<LeaseData | null>(null);
+  const [payments, setPayments] = useState<PaymentData[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+
+  const fetchPaymentData = useCallback(async () => {
+    setDataLoading(true);
+    setDataError("");
+    try {
+      const token = await getToken();
+      if (!token) { setDataError("Not authenticated."); return; }
+      const headers = { Authorization: `Bearer ${token}` };
+      const [leaseResponse, paymentsResponse] = await Promise.all([
+        fetch(`${API_URL}/api/renter/lease`, { headers }),
+        fetch(`${API_URL}/api/renter/payments`, { headers }),
+      ]);
+      const [leaseJson, paymentsJson] = await Promise.all([
+        leaseResponse.json().catch(() => null),
+        paymentsResponse.json().catch(() => null),
+      ]);
+      if (leaseResponse.status === 404) {
+        setLease(null);
+      } else if (!leaseResponse.ok) {
+        setDataError(leaseJson?.error?.message ?? "Failed to load the active lease.");
+        return;
+      } else {
+        setLease(leaseJson?.data ?? null);
+      }
+      if (!paymentsResponse.ok) {
+        setDataError(paymentsJson?.error?.message ?? "Failed to load payment history.");
+        return;
+      }
+      setPayments(paymentsJson?.data ?? []);
+    } catch {
+      setDataError("Network error — is the server running?");
+    } finally {
+      setDataLoading(false);
+    }
+  }, [getToken]);
+
+  useStableFocusEffect(() => { void fetchPaymentData(); });
+  const period = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const currentPeriodPayments = payments
+    .filter((payment) => payment.period === period && payment.status !== "LATE")
+    .reduce((total, payment) => total + payment.amount, 0);
+  const amountDue = Math.max((lease?.monthlyRent ?? 0) - currentPeriodPayments, 0);
 
   const METHOD_MAP: Record<string, string> = {
     bank: "BANK_TRANSFER", card: "CARD", bacs: "DIRECT_DEBIT", open: "OPEN_BANKING",
@@ -74,29 +126,34 @@ export default function PayRent() {
     setPayError(null);
     btnSc.value = withSpring(0.96, { damping: 15 });
     try {
-      const { api, TokenStore } = await import("../../constants/api");
-      const token = await TokenStore.getAccess();
+      const token = await getToken();
       if (!token) { router.replace("/login"); return; }
-
-      // We need an active lease ID — fetch it first
-      const leaseRes = await api.get<{ id: string }>("/api/renter/lease");
-      const leaseId = (leaseRes.data as any)?.id;
-      if (!leaseId) {
+      if (!lease) {
         setPayError("No active lease found. Cannot process payment.");
         return;
       }
-
-      const res = await api.post("/api/renter/payments", {
-        leaseId,
-        amount:    1250,
-        method:    METHOD_MAP[method] ?? "BANK_TRANSFER",
-        reference: ref,
-        period:    "January 2025",
-      });
-      if (!res.success) {
-        setPayError(res.error?.message ?? "Payment failed. Please try again.");
+      if (amountDue <= 0) {
+        setPayError("There is no outstanding rent amount for this period.");
         return;
       }
+
+      const response = await fetch(`${API_URL}/api/renter/payments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          leaseId: lease._id,
+          amount: amountDue,
+          method: METHOD_MAP[method] ?? "BANK_TRANSFER",
+          reference: ref,
+          period,
+        }),
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        setPayError(json?.error?.message ?? "Payment request could not be saved.");
+        return;
+      }
+      await fetchPaymentData();
       setStep("success");
       succOp.value = withTiming(1, { duration: 400 });
       succSc.value = withSpring(1, { damping: 12, stiffness: 180 });
@@ -119,11 +176,11 @@ export default function PayRent() {
       <View style={[s.succRoot, { paddingTop: pt }]}>
         <Animated.View style={[s.succCard, succStyle]}>
           <View style={s.succIconWrap}><Text style={s.succIconTxt}>✓</Text></View>
-          <Text style={s.succTitle}>Payment Sent!</Text>
-          <Text style={s.succSub}>Payment confirmed</Text>
+          <Text style={s.succTitle}>Payment Request Saved</Text>
+          <Text style={s.succSub}>Your landlord must confirm receipt; no payment gateway is connected.</Text>
           <View style={s.succDetail}>
-            {[["Method", cur.label], ["Reference", ref], ["Date", "Today"], ["Status", "Confirmed"]].map(([l, v], i) => (
-              <View key={l} style={s.succRow}><Text style={s.succLbl}>{l}</Text><Text style={[s.succVal, l === "Status" && { color: SUCCESS }]}>{v}</Text></View>
+            {[["Method", cur.label], ["Reference", ref || "Generated by server"], ["Date", new Date().toLocaleDateString("en-IN")], ["Status", "Pending confirmation"]].map(([l, v]) => (
+              <View key={l} style={s.succRow}><Text style={s.succLbl}>{l}</Text>              <Text style={[s.succVal, l === "Status" && { color: WARNING }]}>{v}</Text></View>
             ))}
           </View>
           <TouchableOpacity style={s.doneBtn} onPress={() => router.back()} activeOpacity={0.85}><Text style={s.doneTxt}>Back to Dashboard</Text></TouchableOpacity>
@@ -137,7 +194,7 @@ export default function PayRent() {
       <StatusBar barStyle="light-content" backgroundColor={BRAND_DEEP} translucent={false} />
       <Animated.View style={[s.header, { paddingTop: pt }, hStyle]}>
         <TouchableOpacity onPress={() => step === "confirm" ? setStep("select") : router.back()} style={s.backBtn} activeOpacity={0.7}><Text style={s.backArrow}>‹</Text></TouchableOpacity>
-        <View style={s.hCenter}><Text style={s.hTitle}>{step === "confirm" ? "Confirm Payment" : "Pay Rent"}</Text><Text style={s.hSub}>January 2025</Text></View>
+        <View style={s.hCenter}><Text style={s.hTitle}>{step === "confirm" ? "Confirm Payment" : "Pay Rent"}</Text><Text style={s.hSub}>{period}</Text></View>
         <View style={{ width: 38 }} />
       </Animated.View>
 
@@ -149,18 +206,18 @@ export default function PayRent() {
               <View style={s.dueBanner}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.dueLabel}>AMOUNT DUE</Text>
-                  <Text style={s.dueAmt}>--</Text>
-                  <Text style={s.dueSub}>No active lease</Text>
+                  <Text style={s.dueAmt}>{lease ? `₹${amountDue.toLocaleString("en-IN")}` : dataLoading ? "Loading…" : "—"}</Text>
+                  <Text style={s.dueSub}>{lease ? `Due for ${period}` : dataError || "No active lease"}</Text>
                 </View>
-                <View style={s.daysRing}><Text style={s.daysNum}>--</Text><Text style={s.daysLbl}>days</Text></View>
+                <View style={s.daysRing}><Text style={s.daysNum}>—</Text><Text style={s.daysLbl}>due date</Text></View>
               </View>
             </FadeIn>
 
             <FadeIn delay={80}>
               <View style={s.statsRow}>
-                {[[SUCCESS, SUCCESS_BG, "--",  "On Time"],
-                  [ACCENT_LIGHT, "rgba(74,144,217,0.12)", "--", "Paid YTD"],
-                  [DANGER, DANGER_BG, "--", "Late"]].map(([c, bg, val, lbl]) => (
+                {[[SUCCESS, SUCCESS_BG, String(payments.filter((payment) => payment.status === "PAID").length), "Paid"],
+                  [ACCENT_LIGHT, "rgba(74,144,217,0.12)", `₹${payments.filter((payment) => payment.status === "PAID" && new Date(payment.paidAt ?? payment.createdAt).getFullYear() === new Date().getFullYear()).reduce((sum, payment) => sum + payment.amount, 0).toLocaleString("en-IN")}`, "Paid YTD"],
+                  [DANGER, DANGER_BG, String(payments.filter((payment) => payment.status === "LATE").length), "Late"]].map(([c, bg, val, lbl]) => (
                   <View key={lbl as string} style={[s.statCard, { borderColor: `${c}30`, backgroundColor: bg as string }]}>
                     <Text style={[s.statVal, { color: c as string }]}>{val}</Text>
                     <Text style={s.statLbl}>{lbl}</Text>
@@ -186,7 +243,7 @@ export default function PayRent() {
             <FadeIn delay={220}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Payment Reference</Text>
-                <Text style={s.refHint}>Include this so your landlord can identify your payment.</Text>
+                <Text style={s.refHint}>Add your bank transfer reference if available. The app records the request but does not process payments.</Text>
                 <View style={s.refBox}>
                   <Text style={s.refVal}>{ref}</Text>
                   <TouchableOpacity style={s.copyBtn} activeOpacity={0.7}><Text style={s.copyTxt}>Copy</Text></TouchableOpacity>
@@ -197,14 +254,16 @@ export default function PayRent() {
             <FadeIn delay={290}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Recent Payments</Text>
-                {PAYMENT_HISTORY.length === 0 ? (
+                {dataLoading ? <ActivityIndicator color={ACCENT_LIGHT} /> : dataError ? (
+                  <Text style={{ color: DANGER, fontSize: 13 }}>{dataError}</Text>
+                ) : payments.length === 0 ? (
                   <Text style={{ color: WHITE_40, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>No payment history yet</Text>
-                ) : PAYMENT_HISTORY.slice(0, 3).map((p, i) => (
-                  <View key={p.id} style={[s.histRow, i > 0 && s.bt]}>
-                    <View style={[s.histIcon, { backgroundColor: p.status === "Late" ? DANGER_BG : SUCCESS_BG }]}><Text style={{ fontSize: 14 }}>{p.status === "Late" ? "⚠️" : "✅"}</Text></View>
-                    <View style={{ flex: 1 }}><Text style={s.histMonth}>{p.month}</Text><Text style={s.histDate}>Paid: {p.date}</Text></View>
+                ) : payments.slice(0, 3).map((p, i) => (
+                  <View key={p._id} style={[s.histRow, i > 0 && s.bt]}>
+                    <View style={[s.histIcon, { backgroundColor: p.status === "LATE" ? DANGER_BG : p.status === "PAID" ? SUCCESS_BG : WARNING_BG }]}><Text style={{ fontSize: 14 }}>{p.status === "LATE" ? "⚠️" : p.status === "PAID" ? "✅" : "⏳"}</Text></View>
+                    <View style={{ flex: 1 }}><Text style={s.histMonth}>{p.period ?? new Date(p.createdAt).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text><Text style={s.histDate}>{new Date(p.paidAt ?? p.createdAt).toLocaleDateString("en-IN")}</Text></View>
                     <View style={{ alignItems: "flex-end", gap: 4 }}>
-                      <Text style={s.histAmt}>{p.amount}</Text>
+                      <Text style={s.histAmt}>₹{p.amount.toLocaleString("en-IN")}</Text>
                       <View style={[s.badge, { backgroundColor: `${scColor(p.status)}22` }]}><Text style={[s.badgeTxt, { color: scColor(p.status) }]}>{p.status}</Text></View>
                     </View>
                   </View>
@@ -217,7 +276,7 @@ export default function PayRent() {
             <FadeIn delay={0}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Payment Summary</Text>
-                {[["Payee","Your Landlord"],["Property","--"],["Period","--"],["Amount","--"],["Method",cur.label],["Reference",ref || "--"]].map(([l, v], i) => (
+                {[["Payee","Your Landlord"],["Property",lease ? "Active rental property" : "—"],["Period",period],["Amount",`₹${amountDue.toLocaleString("en-IN")}`],["Method",cur.label],["Reference",ref || "Generated when saved"]].map(([l, v], i) => (
                   <View key={l} style={[s.confRow, i > 0 && s.bt]}>
                     <Text style={s.confLbl}>{l}</Text>
                     <Text style={[s.confVal, l === "Amount" && { color: WARNING, fontSize: 17, fontWeight: "800" }]}>{v}</Text>
@@ -227,8 +286,8 @@ export default function PayRent() {
             </FadeIn>
             <FadeIn delay={80}>
               <View style={s.secureBox}>
-                <Text style={{ fontSize: 16 }}>🔐</Text>
-                <Text style={s.secureTxt}>Your payment is protected by 256-bit encryption. We never store card details.</Text>
+                <Text style={{ fontSize: 16 }}>ℹ️</Text>
+                <Text style={s.secureTxt}>This app records a payment request only. It does not connect to a bank or payment gateway.</Text>
               </View>
             </FadeIn>
           </>}
@@ -247,7 +306,7 @@ export default function PayRent() {
                 onPressIn={() => btnSc.value = withSpring(0.97, { damping: 15 })}
                 onPressOut={() => btnSc.value = withSpring(1, { damping: 15 })}
               >
-                <Text style={s.payTxt}>{busy ? "Processing…" : step === "confirm" ? "Confirm & Pay  ✓" : "Pay Rent  →"}</Text>
+                <Text style={s.payTxt}>{busy ? "Saving…" : step === "confirm" ? "Submit Payment Record  ✓" : "Continue  →"}</Text>
               </TouchableOpacity>
             </Animated.View>
           </FadeIn>
