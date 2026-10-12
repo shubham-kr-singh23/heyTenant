@@ -88,6 +88,25 @@ export const api = {
   delete: <T = any>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
+export async function validateLandlordCode(code: string): Promise<{ landlordName: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/auth/validate-landlord-code/${encodeURIComponent(code.trim().toUpperCase())}`);
+  } catch {
+    throw new Error("Could not reach the server. Check your connection and retry.");
+  }
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(json?.error?.message ?? `Could not validate landlord code (${res.status}).`);
+  }
+  const landlordName = json?.data?.landlordName;
+  if (typeof landlordName !== "string" || !landlordName) {
+    throw new Error("The server could not confirm this landlord code.");
+  }
+  return { landlordName };
+}
+
 // ─── Auth is handled entirely by Clerk. ─────────────────────────────────────
 // Use @clerk/expo hooks (useSignUp, useSignIn, useAuth, useUser) in components.
 // The api/authApi helpers below are kept only for non-auth data endpoints.
@@ -95,7 +114,7 @@ export const api = {
 // ─── Sync authenticated user to MongoDB ──────────────────────────────────────
 // Called after Clerk sign-in / sign-up completes.
 // `getToken` is the function returned by Clerk's useAuth() hook.
-// Returns the stored user document on success, or null on failure (non-fatal).
+// Returns the stored user document on success and throws if the sync fails.
 export async function syncUserWithDB(
   getToken: () => Promise<string | null>,
   payload: {
@@ -103,14 +122,15 @@ export async function syncUserWithDB(
     fullName: string;
     username: string;
     email: string;
+    phone: string;
     password: string;
     role: "LANDLORD" | "RENTER";
     landlordCode?: string; // renter only
   }
-): Promise<unknown | null> {
+): Promise<{ landlordCode?: string }> {
   try {
     const token = await getToken();
-    if (!token) return null;
+    if (!token) throw new Error("Could not authenticate account setup. Please retry.");
 
     const endpoint =
       payload.role === "LANDLORD"
@@ -122,6 +142,7 @@ export async function syncUserWithDB(
       fullName: payload.fullName,
       username: payload.username,
       email: payload.email,
+      phone: payload.phone,
       password: payload.password,
     };
     if (payload.role === "RENTER" && payload.landlordCode) {
@@ -140,12 +161,19 @@ export async function syncUserWithDB(
     });
     const json = await res.json().catch(() => null);
     if (!res.ok) {
-      console.warn("[syncUserWithDB] backend error:", json?.error?.message ?? res.status);
-      return null;
+      throw new Error(json?.error?.message ?? `Account setup failed (${res.status}).`);
     }
-    return json?.data?.user ?? null;
-  } catch (err) {
-    console.warn("[syncUserWithDB] network error:", err);
-    return null;
+    const user = json?.data?.user;
+    if (!user || typeof user !== "object") {
+      throw new Error("The server did not return your account. Please retry.");
+    }
+    return {
+      landlordCode: typeof user.landlordCode === "string" ? user.landlordCode : undefined,
+    };
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error("Could not reach the server. Check your connection and retry.");
+    }
+    throw error;
   }
 }

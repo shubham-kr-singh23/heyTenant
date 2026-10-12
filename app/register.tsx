@@ -17,7 +17,7 @@ import { useRouter } from "expo-router";
 // useAuth stays on the main path; it is a separate hook with no conflict.
 import { useSignUp } from "@clerk/expo/legacy";
 import { useAuth } from "@clerk/expo";
-import { syncUserWithDB } from "../constants/api";
+import { syncUserWithDB, validateLandlordCode } from "../constants/api";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const BRAND_BLUE = "#1A3C5E";
@@ -36,14 +36,14 @@ type Role = "landlord" | "renter";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Generate a 6-character uppercase alphanumeric landlord code. */
-function generateLandlordCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+}
+
+function isValidPhone(v: string) {
+  const value = v.trim();
+  const digits = value.replace(/\D/g, "");
+  return /^\+?[\d\s().-]+$/.test(value) && digits.length >= 7 && digits.length <= 15;
 }
 
 // Split a full name into firstName / lastName for Clerk
@@ -164,6 +164,7 @@ export default function RegisterScreen() {
   const [fullName,    setFN]   = useState("");
   const [username,    setUN]   = useState("");
   const [email,       setEM]   = useState("");
+  const [phone,       setPhone] = useState("");
   const [password,    setPW]   = useState("");
   const [confirmPass, setCP]   = useState("");
   const [passVis,     setPVis] = useState(false);
@@ -173,6 +174,7 @@ export default function RegisterScreen() {
   const [otpValue,     setOtpValue]  = useState("");
   const [otpStatus,    setOtpStatus] = useState<"idle" | "verifying" | "verified" | "error">("idle");
   const [otpCountdown, setCountdown] = useState(0);
+  const [verifiedClerkId, setVerifiedClerkId] = useState<string | null>(null);
 
   // Landlord success-code display
   const [generatedCode, setCode]   = useState("");
@@ -233,10 +235,11 @@ export default function RegisterScreen() {
   };
 
   const clearAll = () => {
-    setFN(""); setUN(""); setEM(""); setPW(""); setCP("");
+    setFN(""); setUN(""); setEM(""); setPhone(""); setPW(""); setCP("");
     setLK(""); setKS("idle"); setErr({}); setSubmitError("");
     setPVis(false); setCVis(false);
     setOtpValue(""); setOtpStatus("idle"); setCountdown(0);
+    setVerifiedClerkId(null);
     setCode(""); setCopied(false);
   };
 
@@ -248,6 +251,7 @@ export default function RegisterScreen() {
     else if (!/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()))
                                                     e.username = "3–20 chars, letters, numbers and underscores only.";
     if (!isValidEmail(email))                       e.email       = "Enter a valid email address.";
+    if (!isValidPhone(phone))                       e.phone       = "Enter a valid phone number (7–15 digits).";
     if (!password)                                  e.password    = "Password is required.";
     if (password !== confirmPass)                   e.confirmPass = "Passwords do not match.";
     setErr(e);
@@ -276,6 +280,7 @@ export default function RegisterScreen() {
         password,
         unsafeMetadata: {
           role,
+          phone: phone.trim(),
           ...(role === "renter" ? { landlordCode: landlordKey } : {}),
         },
       });
@@ -297,8 +302,47 @@ export default function RegisterScreen() {
     }
   };
 
+  const finishDatabaseRegistration = async (clerkId: string) => {
+    const registeredUser = await syncUserWithDB(
+      () => getToken(),
+      {
+        clerkId,
+        fullName,
+        username: username.trim().toLowerCase(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        password,
+        role: role === "landlord" ? "LANDLORD" : "RENTER",
+        ...(role === "renter" ? { landlordCode: landlordKey.toUpperCase() } : {}),
+      }
+    );
+
+    if (role === "landlord") {
+      if (!registeredUser.landlordCode) {
+        throw new Error("Your account was created, but the server did not return a landlord code. Retry account setup.");
+      }
+      setCode(registeredUser.landlordCode);
+      animForm(() => setStep(3));
+    } else {
+      setTimeout(() => router.replace("/renter/dashboard"), 0);
+    }
+  };
+
   // ── STEP 2 → Verify the Clerk email code ────────────────────────────────────
   const handleVerifyOtp = async () => {
+    if (verifiedClerkId) {
+      setOtpStatus("verifying");
+      setErr({});
+      try {
+        await finishDatabaseRegistration(verifiedClerkId);
+        setOtpStatus("verified");
+      } catch (err) {
+        setOtpStatus("error");
+        setErr({ otp: clerkMsg(err) });
+      }
+      return;
+    }
+
     if (otpValue.length < 6) { setErr({ otp: "Enter the full 6-digit code." }); return; }
     if (!isLoaded) return;
     setOtpStatus("verifying");
@@ -308,49 +352,16 @@ export default function RegisterScreen() {
       if (result.status === "complete") {
         // Activate the new session immediately
         await setActive!({ session: result.createdSessionId });
-        setOtpStatus("verified");
-
-        // Sync the newly authenticated user to MongoDB.
-        // createdUserId is the Clerk user id available on the completed sign-up.
         const clerkId = result.createdUserId ?? signUp?.createdUserId ?? "";
-        await syncUserWithDB(
-          () => getToken(),
-          {
-            clerkId,
-            fullName,
-            username: username.trim().toLowerCase(),
-            email: email.trim().toLowerCase(),
-            password,
-            role: role === "landlord" ? "LANDLORD" : "RENTER",
-            ...(role === "renter" ? { landlordCode: landlordKey.toUpperCase() } : {}),
-          }
-        );
-
-        if (role === "landlord") {
-          // Generate a landlord invite code (stored in Clerk publicMetadata via webhook
-          // or can be read from dashboard — for now we show it client-side)
-          setCode(generateLandlordCode());
-          animForm(() => setStep(3));
-        } else {
-          // Defer navigation by one tick so Clerk's session propagation and
-          // any in-flight re-renders finish before we push a new route.
-          // Navigating synchronously right after setActive can cause React to
-          // see a different hook count between renders ("Rendered fewer hooks
-          // than expected") because the auth state change triggers upstream
-          // re-renders concurrently with the route transition.
-          setTimeout(() => router.replace("/renter/dashboard"), 0);
-        }
+        if (!clerkId) throw new Error("Could not determine the verified Clerk account. Please retry.");
+        setVerifiedClerkId(clerkId);
+        await finishDatabaseRegistration(clerkId);
+        setOtpStatus("verified");
       } else {
         // result.status === "missing_requirements" means Clerk still needs more
         // fields before the sign-up can be completed (e.g. phone number required
-        // in the Dashboard). Log details to help diagnose the configuration.
+        // in the Dashboard).
         const missing = (result as any).missingFields ?? [];
-        const required = (result as any).requiredFields ?? [];
-        console.warn(
-          "[OTP] Sign-up not complete. status:", result.status,
-          "| missingFields:", missing,
-          "| requiredFields:", required,
-        );
         setOtpStatus("error");
         if (missing.length > 0) {
           setErr({ otp: `Additional info required: ${missing.join(", ")}. Please contact support.` });
@@ -366,7 +377,7 @@ export default function RegisterScreen() {
 
   // ── Resend code via Clerk ────────────────────────────────────────────────────
   const handleResendOtp = async () => {
-    if (otpCountdown > 0 || !isLoaded) return;
+    if (verifiedClerkId || otpCountdown > 0 || !isLoaded) return;
     setOtpValue("");
     setOtpStatus("idle");
     setErr({});
@@ -374,7 +385,8 @@ export default function RegisterScreen() {
     try {
       await signUp!.prepareEmailAddressVerification({ strategy: "email_code" });
     } catch (err) {
-      console.warn("[RESEND OTP]", clerkMsg(err));
+      setOtpStatus("error");
+      setErr({ otp: clerkMsg(err) });
     }
   };
 
@@ -384,9 +396,16 @@ export default function RegisterScreen() {
       setErr({ landlordKey: "Enter the full 6-character landlord code." });
       return;
     }
-    setKS("valid");
     setErr({});
-    animForm(() => setStep(2));
+    setKS("checking");
+    try {
+      await validateLandlordCode(landlordKey);
+      setKS("valid");
+      animForm(() => setStep(2));
+    } catch (err) {
+      setKS("invalid");
+      setErr({ landlordKey: clerkMsg(err) });
+    }
   };
 
   const handleCopy = () => {
@@ -436,6 +455,7 @@ export default function RegisterScreen() {
     {fld("Full name",        "👤", "fullName",    fullName,    setFN,  { ph: "Your full name", caps: "words" })}
     {fld("Username",         "@",  "username",    username,    setUN,  { ph: "e.g. john_doe", caps: "none" })}
     {fld("Email address",    "✉",  "email",       email,       setEM,  { ph: role === "landlord" ? "landlord@example.com" : "renter@example.com", kb: "email-address", caps: "none" })}
+    {fld("Phone number",     "☎",  "phone",       phone,       setPhone, { ph: "Include country code if applicable", kb: "phone-pad", caps: "none" })}
     {fld("Password",         "🔒", "password",    password,    setPW,  { ph: "Enter a password", secure: true, vis: passVis, togVis: () => setPVis(v => !v), caps: "none" })}
     {fld("Confirm password", "🔒", "confirmPass", confirmPass, setCP,  { ph: "Re-enter password", secure: true, vis: confVis, togVis: () => setCVis(v => !v), caps: "none" })}
   </>);
@@ -474,31 +494,35 @@ export default function RegisterScreen() {
       </View>
       <Text style={s.sh}>Check your inbox</Text>
       <Text style={s.ss}>
-        We sent a 6-digit verification code to{"\n"}
+        {verifiedClerkId
+          ? "Your email is verified. Finish setting up your account below."
+          : <>We sent a 6-digit verification code to{"\n"}
         <Text style={{ color: WHITE, fontWeight: "700" }}>{email}</Text>.{"\n"}
-        Enter it below to confirm it's really you.
+        Enter it below to confirm it's really you.</>}
       </Text>
       <View style={s.fg}>
-        <Text style={s.fl}>Verification code</Text>
-        <OtpInput
-          value={otpValue}
-          onChange={(v) => { setOtpValue(v); setOtpStatus("idle"); setErr({}); }}
-          accent={LANDLORD_C}
-        />
+        {!verifiedClerkId && <>
+          <Text style={s.fl}>Verification code</Text>
+          <OtpInput
+            value={otpValue}
+            onChange={(v) => { setOtpValue(v); setOtpStatus("idle"); setErr({}); }}
+            accent={LANDLORD_C}
+          />
+        </>}
         {errors.otp
           ? <Text style={[s.errTxt, { textAlign: "center", marginTop: 8 }]}>⚠ {errors.otp}</Text>
-          : otpStatus === "verified"
+          : verifiedClerkId || otpStatus === "verified"
           ? <Text style={[s.okTxt, { textAlign: "center", marginTop: 8 }]}>✓  Email verified</Text>
           : null}
       </View>
-      <View style={s.resendRow}>
+      {!verifiedClerkId && <View style={s.resendRow}>
         <Text style={s.resendHint}>Didn't receive it?  </Text>
         <TouchableOpacity onPress={handleResendOtp} disabled={otpCountdown > 0} activeOpacity={0.7}>
           <Text style={[s.resendLink, otpCountdown > 0 && { color: WHITE_40 }]}>
             {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : "Resend code"}
           </Text>
         </TouchableOpacity>
-      </View>
+      </View>}
       <TouchableOpacity
         style={[s.btn, { backgroundColor: LANDLORD_C }, otpStatus === "verifying" && s.btnOff]}
         onPress={handleVerifyOtp}
@@ -507,14 +531,14 @@ export default function RegisterScreen() {
       >
         {otpStatus === "verifying"
           ? <ActivityIndicator color={WHITE} />
-          : <Text style={s.btnTxt}>Verify &amp; Create Account  →</Text>}
+          : <Text style={s.btnTxt}>{verifiedClerkId ? "Retry Account Setup  →" : "Verify &amp; Create Account  →"}</Text>}
       </TouchableOpacity>
-      <Text style={[s.kHint, { marginTop: 16 }]}>
+      {!verifiedClerkId && <Text style={[s.kHint, { marginTop: 16 }]}>
         Wrong email?{" "}
         <Text style={{ color: LANDLORD_C, fontWeight: "600" }} onPress={() => animForm(() => setStep(1))}>
           Go back
         </Text>{" "}to correct it.
-      </Text>
+      </Text>}
     </>);
 
     // ── LANDLORD STEP 3: Success + unique landlord code ───────────────────────
@@ -638,31 +662,35 @@ export default function RegisterScreen() {
       </View>
       <Text style={s.sh}>Check your inbox</Text>
       <Text style={s.ss}>
-        We sent a 6-digit verification code to{"\n"}
+        {verifiedClerkId
+          ? "Your email is verified. Finish setting up your account below."
+          : <>We sent a 6-digit verification code to{"\n"}
         <Text style={{ color: WHITE, fontWeight: "700" }}>{email}</Text>.{"\n"}
-        Enter it below to confirm it's really you.
+        Enter it below to confirm it's really you.</>}
       </Text>
       <View style={s.fg}>
-        <Text style={s.fl}>Verification code</Text>
-        <OtpInput
-          value={otpValue}
-          onChange={(v) => { setOtpValue(v); setOtpStatus("idle"); setErr({}); }}
-          accent={ACCENT}
-        />
+        {!verifiedClerkId && <>
+          <Text style={s.fl}>Verification code</Text>
+          <OtpInput
+            value={otpValue}
+            onChange={(v) => { setOtpValue(v); setOtpStatus("idle"); setErr({}); }}
+            accent={ACCENT}
+          />
+        </>}
         {errors.otp
           ? <Text style={[s.errTxt, { textAlign: "center", marginTop: 8 }]}>⚠ {errors.otp}</Text>
-          : otpStatus === "verified"
+          : verifiedClerkId || otpStatus === "verified"
           ? <Text style={[s.okTxt, { textAlign: "center", marginTop: 8 }]}>✓  Email verified</Text>
           : null}
       </View>
-      <View style={s.resendRow}>
+      {!verifiedClerkId && <View style={s.resendRow}>
         <Text style={s.resendHint}>Didn't receive it?  </Text>
         <TouchableOpacity onPress={handleResendOtp} disabled={otpCountdown > 0} activeOpacity={0.7}>
           <Text style={[s.resendLink, otpCountdown > 0 && { color: WHITE_40 }]}>
             {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : "Resend code"}
           </Text>
         </TouchableOpacity>
-      </View>
+      </View>}
       <TouchableOpacity
         style={[s.btn, { backgroundColor: ACCENT }, otpStatus === "verifying" && s.btnOff]}
         onPress={handleVerifyOtp}
@@ -671,14 +699,14 @@ export default function RegisterScreen() {
       >
         {otpStatus === "verifying"
           ? <ActivityIndicator color={WHITE} />
-          : <Text style={s.btnTxt}>Verify &amp; Create Account  →</Text>}
+          : <Text style={s.btnTxt}>{verifiedClerkId ? "Retry Account Setup  →" : "Verify &amp; Create Account  →"}</Text>}
       </TouchableOpacity>
-      <Text style={[s.kHint, { marginTop: 16 }]}>
+      {!verifiedClerkId && <Text style={[s.kHint, { marginTop: 16 }]}>
         Wrong email?{" "}
         <Text style={{ color: ACCENT, fontWeight: "600" }} onPress={() => animForm(() => setStep(2))}>
           Go back
         </Text>{" "}to correct it.
-      </Text>
+      </Text>}
     </>);
 
     return null;
@@ -690,6 +718,7 @@ export default function RegisterScreen() {
 
   // Back button logic
   const handleBack = () => {
+    if (verifiedClerkId) return;
     if (role === "landlord") {
       if (step === 2) animForm(() => setStep(1));
       else router.back();
@@ -719,6 +748,7 @@ export default function RegisterScreen() {
             style={[s.back, { marginTop: Math.max(insets.top + 12, 44) }]}
             onPress={handleBack}
             activeOpacity={0.7}
+            disabled={Boolean(verifiedClerkId)}
           >
             <Text style={s.backArrow}>←</Text>
             <Text style={s.backTxt}>{step > 1 ? "Back" : "Sign in"}</Text>

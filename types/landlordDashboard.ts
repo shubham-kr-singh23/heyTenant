@@ -73,6 +73,7 @@ export type LandlordDashboardMetrics = {
 };
 
 export type LandlordDashboardData = {
+  landlordCode?: string;
   properties: LandlordProperty[];
   leases: LandlordLease[];
   payments: LandlordPayment[];

@@ -205,7 +205,30 @@ export default function RenterProfile() {
     ? new Date(user.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
     : "--";
 
+  const performSignOut = async () => {
+    try {
+      setSigningOut(true);
+      await signOut();
+      router.replace("/welcome");
+    } catch {
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.alert("Failed to sign out. Please try again.");
+      } else {
+        Alert.alert("Error", "Failed to sign out. Please try again.");
+      }
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const handleSignOut = () => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm("Are you sure you want to sign out?")) {
+        void performSignOut();
+      }
+      return;
+    }
+
     Alert.alert(
       "Sign Out",
       "Are you sure you want to sign out?",
@@ -214,18 +237,7 @@ export default function RenterProfile() {
         {
           text: "Sign Out",
           style: "destructive",
-          onPress: async () => {
-            try {
-              setSigningOut(true);
-              await signOut();
-              router.replace("/welcome");
-            } catch (err) {
-              console.error("Sign out error:", err);
-              Alert.alert("Error", "Failed to sign out. Please try again.");
-            } finally {
-              setSigningOut(false);
-            }
-          },
+          onPress: () => { void performSignOut(); },
         },
       ]
     );

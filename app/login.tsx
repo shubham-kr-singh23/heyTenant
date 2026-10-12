@@ -169,8 +169,7 @@ export default function LoginScreen() {
           return;
         }
       }
-    } catch (error) {
-      console.warn("[login] role-check failed:", error);
+    } catch {
       // Network failure — still allow navigation rather than hard-blocking.
     }
 
@@ -208,11 +207,6 @@ export default function LoginScreen() {
         setClientTrustRequired(true);
         setLoginError("");
       } else {
-        console.warn("[login] Clerk sign-in requires another step:", {
-          status: result.status,
-          supportedFirstFactors: result.supportedFirstFactors?.map((factor) => factor.strategy),
-          supportedSecondFactors: result.supportedSecondFactors?.map((factor) => factor.strategy),
-        });
         setLoginError(`Sign-in requires additional verification (${result.status}). Please contact support.`);
       }
     } catch (err: any) {
@@ -284,7 +278,7 @@ export default function LoginScreen() {
       if (msg.toLowerCase().includes("already signed in")) {
         router.replace(role === "landlord" ? "/landlord/dashboard" : "/renter/dashboard");
       } else {
-        console.error("Google Sign-In error:", err);
+        setLoginError(msg);
       }
     } finally {
       setGoogleLoading(false);

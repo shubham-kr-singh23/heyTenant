@@ -8,6 +8,7 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
+  Clipboard,
   Modal,
   RefreshControl,
 } from "react-native";
@@ -314,6 +315,7 @@ export default function LandlordDashboard() {
   };
   const [activeTab, setActiveTab] = useState<"overview" | "properties" | "tenants" | "finance">("overview");
   const [dashboard, setDashboard] = useState<LandlordDashboardData | null>(null);
+  const [landlordCodeCopied, setLandlordCodeCopied] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
 
@@ -699,6 +701,34 @@ export default function LandlordDashboard() {
         {/* ── Overview / default tabs ───────────────────────────────────────── */}
         {activeTab !== "tenants" && activeTab !== "properties" && (
           <>
+            {dashboard?.landlordCode && (
+              <FadeIn delay={0}>
+                <View style={s.card}>
+                  <View style={s.cardRow}>
+                    <Text style={s.cardTitle}>Your Renter Invite Code</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const code = dashboard?.landlordCode;
+                        if (!code) return;
+                        Clipboard.setString(code);
+                        setLandlordCodeCopied(true);
+                        setTimeout(() => setLandlordCodeCopied(false), 2000);
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[s.cardTitle, { color: ACCENT_LIGHT }]}>
+                        {landlordCodeCopied ? "Copied" : "Copy"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[s.bigVal, { letterSpacing: 5, marginTop: 8 }]}>
+                    {dashboard.landlordCode}
+                  </Text>
+                  <Text style={s.cardSub}>Share this code with renters to link their accounts.</Text>
+                </View>
+              </FadeIn>
+            )}
+
             {/* KPI row */}
             <FadeIn delay={0}>
               <View style={s.kpiRow}>
