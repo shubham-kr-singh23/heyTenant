@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -9,6 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useRouter } from "expo-router";
 import { useAuth } from "@clerk/expo";
+import * as DocumentPicker from "expo-document-picker";
 import { API_URL } from "../../constants/api";
 import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
@@ -37,8 +38,30 @@ const PAYMENT_METHODS = [
   { id: "open",  label: "Open Banking",   icon: "🔐", sub: "Record an external payment" },
 ];
 
-type LeaseData = { _id: string; monthlyRent: number };
+type LeaseData = {
+  _id: string;
+  monthlyRent: number;
+  electricityIncluded?: boolean;
+  electricityRatePerUnit?: number;
+  electricityLastReading?: number;
+};
 type PaymentData = { _id: string; amount: number; status: string; period?: string; paidAt?: string; createdAt: string };
+type ElectricityReadingData = {
+  required: boolean;
+  period: string;
+  ratePerUnit?: number;
+  lastVerifiedReading?: number;
+  chargeDue?: number;
+  reading?: {
+    _id: string;
+    currentReading: number;
+    unitsConsumed: number;
+    chargeAmount: number;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+    rejectionReason?: string;
+  } | null;
+};
+type MeterPhoto = { uri: string; name: string; mimeType: string };
 
 function scColor(s: string) {
   return s === "PAID" ? SUCCESS : s === "LATE" ? DANGER : WARNING;
@@ -71,6 +94,10 @@ export default function PayRent() {
   const [payError, setPayError] = useState<string | null>(null);
   const [lease, setLease] = useState<LeaseData | null>(null);
   const [payments, setPayments] = useState<PaymentData[]>([]);
+  const [electricity, setElectricity] = useState<ElectricityReadingData | null>(null);
+  const [meterReading, setMeterReading] = useState("");
+  const [meterPhoto, setMeterPhoto] = useState<MeterPhoto | null>(null);
+  const [meterBusy, setMeterBusy] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
 
@@ -85,10 +112,12 @@ export default function PayRent() {
         fetch(`${API_URL}/api/renter/lease`, { headers }),
         fetch(`${API_URL}/api/renter/payments`, { headers }),
       ]);
-      const [leaseJson, paymentsJson] = await Promise.all([
+      const [leaseJson, paymentsJson, electricityResponse] = await Promise.all([
         leaseResponse.json().catch(() => null),
         paymentsResponse.json().catch(() => null),
+        fetch(`${API_URL}/api/renter/electricity-reading`, { headers }),
       ]);
+      const electricityJson = await electricityResponse.json().catch(() => null);
       if (leaseResponse.status === 404) {
         setLease(null);
       } else if (!leaseResponse.ok) {
@@ -101,7 +130,12 @@ export default function PayRent() {
         setDataError(paymentsJson?.error?.message ?? "Failed to load payment history.");
         return;
       }
+      if (!electricityResponse.ok) {
+        setDataError(electricityJson?.error?.message ?? "Failed to load electricity billing details.");
+        return;
+      }
       setPayments(paymentsJson?.data ?? []);
+      setElectricity(electricityJson?.data ?? null);
     } catch {
       setDataError("Network error — is the server running?");
     } finally {
@@ -110,14 +144,79 @@ export default function PayRent() {
   }, [getToken]);
 
   useStableFocusEffect(() => { void fetchPaymentData(); });
-  const period = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const period = new Date().toLocaleDateString("en-IN", {
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
   const currentPeriodPayments = payments
     .filter((payment) => payment.period === period && payment.status !== "LATE")
     .reduce((total, payment) => total + payment.amount, 0);
-  const amountDue = Math.max((lease?.monthlyRent ?? 0) - currentPeriodPayments, 0);
+  const electricityApproved = electricity?.reading?.status === "APPROVED";
+  const electricityCharge = electricityApproved ? electricity?.chargeDue ?? electricity.reading?.chargeAmount ?? 0 : 0;
+  const amountDue = Math.max((lease?.monthlyRent ?? 0) + electricityCharge - currentPeriodPayments, 0);
+  const canPay = Boolean(lease)
+    && amountDue > 0
+    && (lease?.electricityIncluded !== false || electricityApproved);
 
   const METHOD_MAP: Record<string, string> = {
     bank: "BANK_TRANSFER", card: "CARD", bacs: "DIRECT_DEBIT", open: "OPEN_BANKING",
+  };
+
+  const pickMeterPhoto = async () => {
+    setPayError(null);
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["image/jpeg", "image/png", "image/webp"],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    if (asset.size !== undefined && asset.size > 10 * 1024 * 1024) {
+      setPayError("Meter photos must be 10 MB or smaller.");
+      return;
+    }
+    const mimeType = asset.mimeType;
+    if (!mimeType || !["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+      setPayError("Choose a JPEG, PNG or WebP meter photo.");
+      return;
+    }
+    setMeterPhoto({ uri: asset.uri, name: asset.name || "meter-reading", mimeType });
+  };
+
+  const submitMeterReading = async () => {
+    if (!electricity?.required || !meterReading.trim() || !meterPhoto) {
+      setPayError("Enter the current meter reading and attach a clear meter photo.");
+      return;
+    }
+    setMeterBusy(true);
+    setPayError(null);
+    try {
+      const token = await getToken();
+      if (!token) { router.replace("/login"); return; }
+      const photoResponse = await fetch(meterPhoto.uri);
+      if (!photoResponse.ok) throw new Error("Could not read the selected meter photo.");
+      const sourceBlob = await photoResponse.blob();
+      const photoBlob = sourceBlob.type === meterPhoto.mimeType
+        ? sourceBlob
+        : new Blob([sourceBlob], { type: meterPhoto.mimeType });
+      const formData = new FormData();
+      formData.append("meterReading", meterReading.trim());
+      formData.append("meterPhoto", photoBlob, meterPhoto.name);
+      const response = await fetch(`${API_URL}/api/renter/electricity-reading`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(json?.error?.message ?? "Could not submit the meter reading.");
+      setMeterReading("");
+      setMeterPhoto(null);
+      await fetchPaymentData();
+    } catch (readingError) {
+      setPayError(readingError instanceof Error ? readingError.message : "Could not submit the meter reading.");
+    } finally {
+      setMeterBusy(false);
+    }
   };
 
   const pay = async () => {
@@ -136,13 +235,16 @@ export default function PayRent() {
         setPayError("There is no outstanding rent amount for this period.");
         return;
       }
+      if (lease.electricityIncluded === false && !electricityApproved) {
+        setPayError("Wait for your landlord to approve the meter reading before submitting rent.");
+        return;
+      }
 
       const response = await fetch(`${API_URL}/api/renter/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           leaseId: lease._id,
-          amount: amountDue,
           method: METHOD_MAP[method] ?? "BANK_TRANSFER",
           reference: ref,
           period,
@@ -199,7 +301,13 @@ export default function PayRent() {
       </Animated.View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={s.body}
+          contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={dataLoading} onRefresh={() => { void fetchPaymentData(); }} tintColor={TEAL} />}
+        >
 
           {step === "select" && <>
             <FadeIn delay={0}>
@@ -212,6 +320,64 @@ export default function PayRent() {
                 <View style={s.daysRing}><Text style={s.daysNum}>—</Text><Text style={s.daysLbl}>due date</Text></View>
               </View>
             </FadeIn>
+
+            {lease?.electricityIncluded === false && electricity ? (
+              <FadeIn delay={40}>
+                <View style={s.card}>
+                  <Text style={s.cardTitle}>Electricity Meter Reading</Text>
+                  <Text style={s.refHint}>
+                    Starting from meter reading {electricity.lastVerifiedReading ?? lease.electricityLastReading ?? 0}.
+                    Enter the current cumulative meter reading and upload a clear photo. Units and charges are calculated by the server at ₹{electricity.ratePerUnit ?? lease.electricityRatePerUnit ?? 7} per unit.
+                  </Text>
+                  {electricity.reading?.status === "APPROVED" ? (
+                    <View style={s.readingStatus}>
+                      <Text style={s.readingStatusTitle}>Reading approved</Text>
+                      <Text style={s.readingStatusText}>
+                        {electricity.reading.unitsConsumed.toLocaleString("en-IN")} units · ₹{electricity.reading.chargeAmount.toLocaleString("en-IN")}
+                      </Text>
+                    </View>
+                  ) : electricity.reading?.status === "PENDING" ? (
+                    <View style={s.readingStatus}>
+                      <Text style={s.readingStatusTitle}>Waiting for landlord approval</Text>
+                      <Text style={s.readingStatusText}>Electricity will be added to rent after the photo is reviewed.</Text>
+                    </View>
+                  ) : (
+                    <>
+                      {electricity.reading?.status === "REJECTED" ? (
+                        <Text style={s.rejectionText}>
+                          Previous reading rejected: {electricity.reading.rejectionReason || "Please submit a new clear photo and reading."}
+                        </Text>
+                      ) : null}
+                      <TextInput
+                        value={meterReading}
+                        onChangeText={setMeterReading}
+                        placeholder="Current meter reading"
+                        placeholderTextColor={WHITE_40}
+                        keyboardType="decimal-pad"
+                        style={s.meterInput}
+                      />
+                      <TouchableOpacity style={s.photoButton} onPress={() => { void pickMeterPhoto(); }} disabled={meterBusy}>
+                        <Text style={s.photoButtonText}>{meterPhoto ? `Photo: ${meterPhoto.name}` : "Choose meter photo"}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.submitReadingButton, meterBusy && { opacity: 0.6 }]}
+                        onPress={() => { void submitMeterReading(); }}
+                        disabled={meterBusy}
+                      >
+                        <Text style={s.submitReadingText}>{meterBusy ? "Submitting…" : "Submit reading for approval"}</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                  {electricityApproved ? (
+                    <View style={s.billBreakdown}>
+                      <Text style={s.billRow}>Monthly rent: ₹{(lease.monthlyRent ?? 0).toLocaleString("en-IN")}</Text>
+                      <Text style={s.billRow}>Electricity: ₹{electricityCharge.toLocaleString("en-IN")}</Text>
+                      <Text style={s.billTotal}>Total: ₹{((lease.monthlyRent ?? 0) + electricityCharge).toLocaleString("en-IN")}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </FadeIn>
+            ) : null}
 
             <FadeIn delay={80}>
               <View style={s.statsRow}>
@@ -276,7 +442,7 @@ export default function PayRent() {
             <FadeIn delay={0}>
               <View style={s.card}>
                 <Text style={s.cardTitle}>Payment Summary</Text>
-                {[["Payee","Your Landlord"],["Property",lease ? "Active rental property" : "—"],["Period",period],["Amount",`₹${amountDue.toLocaleString("en-IN")}`],["Method",cur.label],["Reference",ref || "Generated when saved"]].map(([l, v], i) => (
+                {[["Payee","Your Landlord"],["Property",lease ? "Active rental property" : "—"],["Period",period],["Monthly rent",`₹${(lease?.monthlyRent ?? 0).toLocaleString("en-IN")}`],...(electricityCharge > 0 ? [["Electricity",`₹${electricityCharge.toLocaleString("en-IN")}`]] : []),["Amount",`₹${amountDue.toLocaleString("en-IN")}`],["Method",cur.label],["Reference",ref || "Generated when saved"]].map(([l, v], i) => (
                   <View key={l} style={[s.confRow, i > 0 && s.bt]}>
                     <Text style={s.confLbl}>{l}</Text>
                     <Text style={[s.confVal, l === "Amount" && { color: WARNING, fontSize: 17, fontWeight: "800" }]}>{v}</Text>
@@ -302,7 +468,7 @@ export default function PayRent() {
             <Animated.View style={btnStyle}>
               <TouchableOpacity
                 style={[s.payBtn, { backgroundColor: step === "confirm" ? SUCCESS : WARNING }, busy && { opacity: 0.65 }]}
-                onPress={pay} activeOpacity={0.85} disabled={busy}
+                onPress={pay} activeOpacity={0.85} disabled={busy || (step === "select" && !canPay)}
                 onPressIn={() => btnSc.value = withSpring(0.97, { damping: 15 })}
                 onPressOut={() => btnSc.value = withSpring(1, { damping: 15 })}
               >
@@ -349,6 +515,18 @@ const s = StyleSheet.create({
   radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: WHITE_40 },
   radioOn: { borderColor: TEAL, backgroundColor: TEAL },
   refHint: { fontSize: 12, color: WHITE_40, marginBottom: 12, lineHeight: 17 },
+  meterInput: { backgroundColor: WHITE_05, borderRadius: 12, borderWidth: 1, borderColor: WHITE_15, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: WHITE, marginBottom: 10 },
+  photoButton: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: ACCENT_LIGHT, alignItems: "center", justifyContent: "center", marginBottom: 10, paddingHorizontal: 10 },
+  photoButtonText: { color: ACCENT_LIGHT, fontSize: 12, fontWeight: "700" },
+  submitReadingButton: { minHeight: 46, borderRadius: 12, backgroundColor: TEAL, alignItems: "center", justifyContent: "center" },
+  submitReadingText: { color: WHITE, fontSize: 13, fontWeight: "700" },
+  readingStatus: { backgroundColor: `${TEAL}18`, borderRadius: 12, padding: 12 },
+  readingStatusTitle: { color: WHITE, fontSize: 13, fontWeight: "700", marginBottom: 4 },
+  readingStatusText: { color: WHITE_72, fontSize: 12, lineHeight: 18 },
+  rejectionText: { color: DANGER, fontSize: 12, lineHeight: 18, marginBottom: 10 },
+  billBreakdown: { marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: WHITE_15, gap: 6 },
+  billRow: { color: WHITE_72, fontSize: 12 },
+  billTotal: { color: SUCCESS, fontSize: 14, fontWeight: "800", marginTop: 2 },
   refBox: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: WHITE_05, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: WHITE_15 },
   refVal: { fontSize: 14, fontWeight: "600", color: WHITE, letterSpacing: 0.5 },
   copyBtn: { backgroundColor: `${ACCENT_LIGHT}25`, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },

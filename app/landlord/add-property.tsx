@@ -91,6 +91,8 @@ export default function AddProperty() {
   const [roomNum, setRoomNum] = useState("");
   const [rent,  setRent]  = useState("");
   const [deposit, setDeposit] = useState("");
+  const [electricityIncluded, setElectricityIncluded] = useState(true);
+  const [electricityInitialReading, setElectricityInitialReading] = useState("");
   const [desc,  setDesc]  = useState("");
   const [amenities, setAmenities] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -109,6 +111,12 @@ export default function AddProperty() {
     if (!post.trim()) e.post = "Postcode is required.";
     if (!beds.trim()) e.beds = "Number of bedrooms is required.";
     if (!rent.trim()) e.rent = "Monthly rent is required.";
+    if (!electricityIncluded) {
+      const reading = Number(electricityInitialReading);
+      if (!electricityInitialReading.trim() || !Number.isFinite(reading) || reading < 0 || !Number.isInteger(reading * 1000)) {
+        e.electricityInitialReading = "Enter the current meter reading to establish the starting balance.";
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -151,6 +159,10 @@ export default function AddProperty() {
           bathrooms:     baths ? parseInt(baths, 10) : undefined,
           roomNumber:    propertyType === "House" && roomNum.trim() ? roomNum.trim() : undefined,
           monthlyRent:   parseFloat(rent.replace(/,/g, "")) || 0,
+          electricityIncluded,
+          electricityInitialReading: electricityIncluded
+            ? undefined
+            : Number(electricityInitialReading),
           depositAmount: deposit ? parseFloat(deposit.replace(/,/g, "")) : undefined,
           description:   desc.trim() || undefined,
           amenities:     amenities.length > 0 ? amenities : undefined,
@@ -278,6 +290,53 @@ export default function AddProperty() {
             </View>
           </FadeIn>
 
+          <FadeIn delay={270}>
+            <View style={s.card}>
+              <Text style={s.cardTitle}>Electricity Charges</Text>
+              <Text style={s.electricityHint}>Choose how electricity is billed for this property.</Text>
+              <View style={s.electricityChoices}>
+                {[true, false].map((included) => (
+                  <TouchableOpacity
+                    key={String(included)}
+                    onPress={() => setElectricityIncluded(included)}
+                    activeOpacity={0.75}
+                    style={[
+                      s.electricityChoice,
+                      electricityIncluded === included && s.electricityChoiceActive,
+                    ]}
+                  >
+                    <Text style={[
+                      s.electricityChoiceTitle,
+                      electricityIncluded === included && { color: ACCENT_LIGHT },
+                    ]}>
+                      {included ? "Included in rent" : "Billed by usage"}
+                    </Text>
+                    <Text style={s.electricityHint}>
+                      {included
+                        ? "Renter pays the monthly rent only."
+                        : "Renter pays ₹7 per verified unit consumed."}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {!electricityIncluded ? (
+                <>
+                  <Field
+                    label="Starting Electricity Meter Reading"
+                    placeholder="e.g. 1250"
+                    value={electricityInitialReading}
+                    onChangeText={setElectricityInitialReading}
+                    keyboardType="decimal-pad"
+                    error={errors.electricityInitialReading}
+                  />
+                  <Text style={s.electricityHint}>
+                    This reading is the baseline. Renters must submit a meter photo and a later reading; you approve it before electricity is added to rent.
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          </FadeIn>
+
           {/* Amenities */}
           <FadeIn delay={300}>
             <View style={s.card}>
@@ -334,6 +393,11 @@ const s = StyleSheet.create({
   content: { padding: 16, gap: 14 },
   card:    { backgroundColor: WHITE_08, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: WHITE_15 },
   cardTitle: { fontSize: 14, fontWeight: "700", color: WHITE, marginBottom: 14, letterSpacing: 0.2 },
+  electricityHint: { color: WHITE_40, fontSize: 12, lineHeight: 18, marginBottom: 10 },
+  electricityChoices: { gap: 8, marginBottom: 14 },
+  electricityChoice: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: WHITE_15, backgroundColor: WHITE_05 },
+  electricityChoiceActive: { borderColor: ACCENT_LIGHT, backgroundColor: `${ACCENT_LIGHT}12` },
+  electricityChoiceTitle: { color: WHITE_72, fontSize: 13, fontWeight: "700", marginBottom: 4 },
   twoCol:  { flexDirection: "row", gap: 12 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   stepRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: WHITE_08, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: WHITE_15 },

@@ -123,7 +123,6 @@ export async function syncUserWithDB(
     username: string;
     email: string;
     phone: string;
-    password: string;
     role: "LANDLORD" | "RENTER";
     landlordCode?: string; // renter only
   }
@@ -143,7 +142,6 @@ export async function syncUserWithDB(
       username: payload.username,
       email: payload.email,
       phone: payload.phone,
-      password: payload.password,
     };
     if (payload.role === "RENTER" && payload.landlordCode) {
       body.landlordCode = payload.landlordCode;

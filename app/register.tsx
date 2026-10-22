@@ -311,7 +311,6 @@ export default function RegisterScreen() {
         username: username.trim().toLowerCase(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
-        password,
         role: role === "landlord" ? "LANDLORD" : "RENTER",
         ...(role === "renter" ? { landlordCode: landlordKey.toUpperCase() } : {}),
       }

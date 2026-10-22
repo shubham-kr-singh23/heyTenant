@@ -909,6 +909,7 @@ export default function LandlordDashboard() {
                     { label: "View Reports", color: PURPLE, route: "/landlord/view-reports" },
                     { label: "New Invoice", color: ACCENT_LIGHT, route: "/landlord/new-invoice" },
                     { label: "Inspections", color: DANGER, route: "/landlord/inspections" },
+                    { label: "Electricity Readings", color: SUCCESS, route: "/landlord/electricity-readings" },
                   ].map((a) => (
                     <TouchableOpacity key={a.label} style={s.actionBtn} activeOpacity={0.7}
                       onPress={() => router.push(a.route as any)}>

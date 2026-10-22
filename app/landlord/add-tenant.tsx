@@ -1,22 +1,21 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Platform, StatusBar, KeyboardAvoidingView,
+  TextInput, Platform, StatusBar, KeyboardAvoidingView, ActivityIndicator, Clipboard,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing } from "react-native-reanimated";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/expo";
+import { API_URL } from "../../constants/api";
+import { useStableFocusEffect } from "../../hooks/useStableFocusEffect";
 
 const BRAND_BLUE   = "#1A3C5E";
 const BRAND_DEEP   = "#122B44";
-const ACCENT       = "#3B6FA8";
 const ACCENT_LIGHT = "#4A90D9";
 const SUCCESS      = "#22C55E";
 const SUCCESS_BG   = "rgba(34,197,94,0.12)";
 const WARNING      = "#F59E0B";
-const WARNING_BG   = "rgba(245,158,11,0.12)";
 const DANGER       = "#F87171";
-const DANGER_BG    = "rgba(248,113,113,0.12)";
 const WHITE        = "#FFFFFF";
 const WHITE_72     = "rgba(255,255,255,0.72)";
 const WHITE_40     = "rgba(255,255,255,0.40)";
@@ -24,24 +23,23 @@ const WHITE_15     = "rgba(255,255,255,0.15)";
 const WHITE_08     = "rgba(255,255,255,0.08)";
 const WHITE_05     = "rgba(255,255,255,0.05)";
 
-const AVAILABLE_UNITS = [
-  { id: "1", label: "MG Road — Flat 4B",       rent: "₹25,000/mo" },
-  { id: "2", label: "Linking Rd — Unit 3A",     rent: "₹22,000/mo" },
-  { id: "3", label: "Brigade Rd — Studio 1A",   rent: "₹18,500/mo" },
-  { id: "4", label: "Koramangala — Flat 6C",    rent: "₹28,000/mo" },
-];
+type Property = {
+  _id: string;
+  name: string;
+  addressLine1: string;
+  city: string;
+  monthlyRent: number;
+  status: "VACANT" | "OCCUPIED";
+};
 
-function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
-  const op = useSharedValue(0); const ty = useSharedValue(18);
-  useEffect(() => {
-    op.value = withDelay(delay, withTiming(1, { duration: 420 }));
-    ty.value = withDelay(delay, withTiming(0, { duration: 420, easing: Easing.out(Easing.cubic) }));
-  }, []);
-  const style = useAnimatedStyle(() => ({ opacity: op.value, transform: [{ translateY: ty.value }] }));
-  return <Animated.View style={style}>{children}</Animated.View>;
+function Section({ children }: { children: React.ReactNode }) {
+  return <View>{children}</View>;
 }
 
-function Field({ label, placeholder, value, onChangeText, keyboardType = "default", multiline = false, error }: any) {
+function Field({
+  label, placeholder, value, onChangeText, keyboardType = "default",
+  multiline = false, error, secureTextEntry = false, autoCapitalize = "sentences",
+}: any) {
   const [focused, setFocused] = useState(false);
   return (
     <View style={fi.wrap}>
@@ -50,7 +48,8 @@ function Field({ label, placeholder, value, onChangeText, keyboardType = "defaul
         style={[fi.input, focused && fi.focused, multiline && fi.multi, error && fi.err]}
         placeholder={placeholder} placeholderTextColor="rgba(255,255,255,0.25)"
         value={value} onChangeText={onChangeText} keyboardType={keyboardType}
-        multiline={multiline} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        multiline={multiline} secureTextEntry={secureTextEntry} autoCapitalize={autoCapitalize}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
       />
       {error ? <Text style={fi.errTxt}>{error}</Text> : null}
     </View>
@@ -68,14 +67,20 @@ const fi = StyleSheet.create({
 
 export default function AddTenant() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const insets = useSafeAreaInsets();
   const paddingTop = Platform.OS === "android" ? Math.max((StatusBar.currentHeight ?? 0) + 8, 32) : Math.max(insets.top + 8, 32);
 
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [propertiesLoading, setPropertiesLoading] = useState(true);
+  const [propertyLoadError, setPropertyLoadError] = useState<string | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [firstName,  setFirstName]  = useState("");
   const [lastName,   setLastName]   = useState("");
   const [email,      setEmail]      = useState("");
   const [phone,      setPhone]      = useState("");
+  const [password,   setPassword]   = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [dob,        setDob]        = useState("");
   const [nin,        setNin]        = useState("");
   const [leaseStart, setLeaseStart] = useState("");
@@ -87,6 +92,42 @@ export default function AddTenant() {
   const [checklist,  setChecklist]  = useState<string[]>([]);
   const [errors,     setErrors]     = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
+
+  const loadAvailableProperties = useCallback(async () => {
+    setPropertiesLoading(true);
+    setPropertyLoadError(null);
+    try {
+      const token = await getToken();
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
+      const response = await fetch(`${API_URL}/api/landlord/properties`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Could not load your properties.");
+      }
+      const allProperties = Array.isArray(json?.data) ? json.data as Property[] : [];
+      const availableProperties = allProperties.filter((property) => property.status === "VACANT");
+      setProperties(availableProperties);
+      setSelectedUnit((current) => current
+        && !availableProperties.some((property) => property._id === current)
+        ? null
+        : current);
+    } catch (error) {
+      setPropertyLoadError(error instanceof Error ? error.message : "Could not load your properties.");
+    } finally {
+      setPropertiesLoading(false);
+    }
+  }, [getToken, router]);
+
+  useStableFocusEffect(() => {
+    void loadAvailableProperties();
+  });
 
   const CHECKLIST = [
     "Right-to-rent checks completed",
@@ -106,8 +147,29 @@ export default function AddTenant() {
     if (!lastName.trim())          e.lastName   = "Last name is required.";
     if (!/\S+@\S+\.\S+/.test(email)) e.email   = "Enter a valid email address.";
     if (!phone.trim())             e.phone      = "Phone number is required.";
+    if (password.length < 8)       e.password   = "Use at least 8 characters.";
+    if (password !== confirmPassword) e.confirmPassword = "Passwords do not match.";
     if (!leaseStart.trim())        e.leaseStart = "Lease start date is required.";
     if (!leaseEnd.trim())          e.leaseEnd   = "Lease end date is required.";
+    const parseDMY = (date: string) => {
+      const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(date.trim());
+      if (!match) return null;
+      const [, day, month, year] = match;
+      const parsed = new Date(`${year}-${month}-${day}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())
+        || parsed.getFullYear() !== Number(year)
+        || parsed.getMonth() !== Number(month) - 1
+        || parsed.getDate() !== Number(day)) return null;
+      return `${year}-${month}-${day}`;
+    };
+    const startDate = parseDMY(leaseStart);
+    const endDate = parseDMY(leaseEnd);
+    if (leaseStart.trim() && !startDate) e.leaseStart = "Use a valid date in DD/MM/YYYY format.";
+    if (leaseEnd.trim() && !endDate) e.leaseEnd = "Use a valid date in DD/MM/YYYY format.";
+    if (startDate && endDate && endDate <= startDate) e.leaseEnd = "Lease end must be after the start date.";
+    if (rentDay && (!/^\d+$/.test(rentDay) || Number(rentDay) < 1 || Number(rentDay) > 31)) {
+      e.rentDay = "Enter a day between 1 and 31.";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -119,23 +181,27 @@ export default function AddTenant() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const { api, TokenStore } = await import("../../constants/api");
-      const token = await TokenStore.getAccess();
+      const token = await getToken();
       if (!token) { router.replace("/login"); return; }
 
-      // Format dates from DD/MM/YYYY → YYYY-MM-DD
-      const parseDMY = (d: string) => {
-        const [dd, mm, yyyy] = d.split("/");
-        return `${yyyy}-${mm.padStart(2,"0")}-${dd.padStart(2,"0")}`;
+      const parseDMY = (date: string) => {
+        const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(date.trim())!;
+        return `${year}-${month}-${day}`;
       };
 
-      const unit = AVAILABLE_UNITS.find(u => u.id === selectedUnit);
-      const res = await api.post("/api/landlord/tenants", {
+      const response = await fetch(`${API_URL}/api/landlord/tenants`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
         propertyId:             selectedUnit,
         firstName:              firstName.trim(),
         lastName:               lastName.trim(),
-        email:                  email.trim(),
+        email:                  email.trim().toLowerCase(),
         phone:                  phone.trim(),
+        password,
         dateOfBirth:            dob.trim() || undefined,
         nationalInsuranceNumber: nin.trim() || undefined,
         leaseStart:             parseDMY(leaseStart),
@@ -145,30 +211,30 @@ export default function AddTenant() {
         emergencyContactPhone:  emergPhone.trim() || undefined,
         checklistCompleted:     checklist.length > 0 ? checklist : undefined,
         notes:                  notes.trim() || undefined,
+        }),
       });
-      if (!res.success) {
-        setSubmitError(res.error?.message ?? "Failed to add tenant.");
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        setSubmitError(result?.error?.message ?? `Failed to add renter (${response.status}).`);
         return;
       }
-      router.back();
-    } catch {
-      setSubmitError("Network error — is the server running?");
+      setRegistrationComplete(true);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not connect to the server. Please retry.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const hOp = useSharedValue(0); const hTy = useSharedValue(-14);
-  useEffect(() => {
-    hOp.value = withTiming(1, { duration: 350 });
-    hTy.value = withTiming(0, { duration: 350, easing: Easing.out(Easing.cubic) });
-  }, []);
-  const hStyle = useAnimatedStyle(() => ({ opacity: hOp.value, transform: [{ translateY: hTy.value }] }));
+  const copyCredentials = () => {
+    Clipboard.setString(`Email: ${email.trim().toLowerCase()}\nPassword: ${password}`);
+    setCredentialsCopied(true);
+  };
 
   return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor={BRAND_DEEP} translucent={false} />
-      <Animated.View style={[s.header, { paddingTop }, hStyle]}>
+      <View style={[s.header, { paddingTop }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} activeOpacity={0.7}>
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
@@ -177,34 +243,81 @@ export default function AddTenant() {
           <Text style={s.hSub}>Register a new tenancy</Text>
         </View>
         <View style={{ width: 38 }} />
-      </Animated.View>
+      </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView style={s.body} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom + 32, 48) }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
+          {registrationComplete ? (
+            <Section>
+              <View style={s.card}>
+                <Text style={s.successTitle}>Renter account created</Text>
+                <Text style={s.successMessage}>
+                  Share these sign-in details with {firstName.trim()}. The renter can sign in without you logging out.
+                </Text>
+                <View style={s.credentialRow}>
+                  <Text style={s.credentialLabel}>Email</Text>
+                  <Text selectable style={s.credentialValue}>{email.trim().toLowerCase()}</Text>
+                </View>
+                <View style={s.credentialRow}>
+                  <Text style={s.credentialLabel}>Password</Text>
+                  <Text selectable style={s.credentialValue}>{password}</Text>
+                </View>
+                <TouchableOpacity
+                  style={s.copyBtn}
+                  onPress={copyCredentials}
+                  activeOpacity={0.85}
+                >
+                  <Text style={s.submitTxt}>{credentialsCopied ? "Credentials Copied" : "Copy Sign-in Details"}</Text>
+                </TouchableOpacity>
+                <Text style={s.securityHint}>Share these credentials privately with the renter.</Text>
+                <TouchableOpacity onPress={() => router.back()} activeOpacity={0.8} style={s.doneBtn}>
+                  <Text style={s.doneTxt}>Back to Dashboard</Text>
+                </TouchableOpacity>
+              </View>
+            </Section>
+          ) : (
+            <>
           {/* Assign unit */}
-          <FadeIn delay={0}>
+          <Section>
             <View style={s.card}>
-              <Text style={s.cardTitle}>Assign Property Unit</Text>
+              <Text style={s.cardTitle}>Choose an Available Property</Text>
               {errors.unit ? <Text style={s.errMsg}>{errors.unit}</Text> : null}
-              {AVAILABLE_UNITS.map((u) => (
-                <TouchableOpacity key={u.id} onPress={() => setSelectedUnit(u.id)} activeOpacity={0.75}
-                  style={[s.unitRow, selectedUnit === u.id && s.unitActive]}>
-                  <View style={[s.radio, selectedUnit === u.id && s.radioActive]} />
+              {propertiesLoading ? (
+                <ActivityIndicator color={ACCENT_LIGHT} style={{ marginVertical: 16 }} />
+              ) : propertyLoadError ? (
+                <View>
+                  <Text style={s.errMsg}>{propertyLoadError}</Text>
+                  <TouchableOpacity onPress={() => void loadAvailableProperties()} activeOpacity={0.75}>
+                    <Text style={s.retryText}>Try again</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : properties.length === 0 ? (
+                <View>
+                  <Text style={s.emptyMessage}>There are no vacant properties available right now.</Text>
+                  <TouchableOpacity onPress={() => router.push("/landlord/add-property")} activeOpacity={0.75}>
+                    <Text style={s.retryText}>Add a property</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : properties.map((property) => (
+                <TouchableOpacity key={property._id} onPress={() => setSelectedUnit(property._id)} activeOpacity={0.75}
+                  style={[s.unitRow, selectedUnit === property._id && s.unitActive]}>
+                  <View style={[s.radio, selectedUnit === property._id && s.radioActive]} />
                   <View style={{ flex: 1 }}>
-                    <Text style={[s.unitName, selectedUnit === u.id && { color: WHITE }]}>{u.label}</Text>
-                    <Text style={s.unitRent}>{u.rent}</Text>
+                    <Text style={[s.unitName, selectedUnit === property._id && { color: WHITE }]}>{property.name}</Text>
+                    <Text style={s.unitRent}>{property.addressLine1}, {property.city}</Text>
+                    <Text style={s.unitRent}>₹{property.monthlyRent.toLocaleString("en-IN")}/mo</Text>
                   </View>
-                  {selectedUnit === u.id && (
+                  {selectedUnit === property._id && (
                     <View style={s.checkBadge}><Text style={s.checkTxt}>✓</Text></View>
                   )}
                 </TouchableOpacity>
               ))}
             </View>
-          </FadeIn>
+          </Section>
 
           {/* Personal info */}
-          <FadeIn delay={80}>
+          <Section>
             <View style={s.card}>
               <Text style={s.cardTitle}>Personal Information</Text>
               <View style={s.twoCol}>
@@ -212,49 +325,54 @@ export default function AddTenant() {
                 <View style={{ flex: 1 }}><Field label="Last Name" placeholder="Lee" value={lastName} onChangeText={setLastName} error={errors.lastName} /></View>
               </View>
               <Field label="Email Address" placeholder="alex.lee@email.com" value={email} onChangeText={setEmail} keyboardType="email-address" error={errors.email} />
-              <Field label="Phone Number" placeholder="+44 7700 900000" value={phone} onChangeText={setPhone} keyboardType="phone-pad" error={errors.phone} />
+              <Field label="Phone Number (country code optional)" placeholder="7700 900000" value={phone} onChangeText={setPhone} keyboardType="phone-pad" error={errors.phone} />
+              <Text style={s.credentialsHint}>Create the sign-in password and share it with the renter after registration.</Text>
+              <Field label="Sign-in Password" placeholder="At least 8 characters" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" error={errors.password} />
+              <Field label="Confirm Password" placeholder="Enter the password again" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" error={errors.confirmPassword} />
               <View style={s.twoCol}>
                 <View style={{ flex: 1 }}><Field label="Date of Birth" placeholder="DD/MM/YYYY" value={dob} onChangeText={setDob} /></View>
                 <View style={{ flex: 1 }}><Field label="NI Number" placeholder="AB 12 34 56 C" value={nin} onChangeText={setNin} /></View>
               </View>
             </View>
-          </FadeIn>
+          </Section>
 
           {/* Lease terms */}
-          <FadeIn delay={160}>
+          <Section>
             <View style={s.card}>
               <Text style={s.cardTitle}>Lease Terms</Text>
               <View style={s.twoCol}>
                 <View style={{ flex: 1 }}><Field label="Lease Start" placeholder="01/01/2025" value={leaseStart} onChangeText={setLeaseStart} error={errors.leaseStart} /></View>
                 <View style={{ flex: 1 }}><Field label="Lease End" placeholder="31/12/2025" value={leaseEnd} onChangeText={setLeaseEnd} error={errors.leaseEnd} /></View>
               </View>
-              <Field label="Rent Due Day" placeholder="1" value={rentDay} onChangeText={setRentDay} keyboardType="numeric" />
-              {selectedUnit && (
+              <Field label="Rent Due Day" placeholder="1" value={rentDay} onChangeText={setRentDay} keyboardType="numeric" error={errors.rentDay} />
+              {selectedUnit && properties.find((property) => property._id === selectedUnit) && (
                 <View style={s.leaseSummary}>
                   <View style={s.leaseSummaryRow}>
                     <Text style={s.leaseSummaryLbl}>Unit</Text>
-                    <Text style={s.leaseSummaryVal}>{AVAILABLE_UNITS.find(u => u.id === selectedUnit)?.label}</Text>
+                    <Text style={s.leaseSummaryVal}>{properties.find((property) => property._id === selectedUnit)?.name}</Text>
                   </View>
                   <View style={[s.leaseSummaryRow, { marginTop: 6 }]}>
                     <Text style={s.leaseSummaryLbl}>Monthly Rent</Text>
-                    <Text style={[s.leaseSummaryVal, { color: SUCCESS }]}>{AVAILABLE_UNITS.find(u => u.id === selectedUnit)?.rent}</Text>
+                    <Text style={[s.leaseSummaryVal, { color: SUCCESS }]}>
+                      ₹{properties.find((property) => property._id === selectedUnit)?.monthlyRent.toLocaleString("en-IN")}/mo
+                    </Text>
                   </View>
                 </View>
               )}
             </View>
-          </FadeIn>
+          </Section>
 
           {/* Emergency contact */}
-          <FadeIn delay={230}>
+          <Section>
             <View style={s.card}>
               <Text style={s.cardTitle}>Emergency Contact</Text>
               <Field label="Full Name" placeholder="Jane Lee (Sister)" value={emergName} onChangeText={setEmergName} />
-              <Field label="Phone Number" placeholder="+44 7700 900111" value={emergPhone} onChangeText={setEmergPhone} keyboardType="phone-pad" />
+              <Field label="Phone Number (country code optional)" placeholder="7700 900111" value={emergPhone} onChangeText={setEmergPhone} keyboardType="phone-pad" />
             </View>
-          </FadeIn>
+          </Section>
 
           {/* Pre-tenancy checklist */}
-          <FadeIn delay={290}>
+          <Section>
             <View style={s.card}>
               <Text style={s.cardTitle}>Pre-tenancy Checklist</Text>
               <View style={s.checklistProgress}>
@@ -271,27 +389,28 @@ export default function AddTenant() {
                 </TouchableOpacity>
               ))}
             </View>
-          </FadeIn>
+          </Section>
 
           {/* Notes */}
-          <FadeIn delay={340}>
+          <Section>
             <View style={s.card}>
               <Text style={s.cardTitle}>Notes</Text>
               <Field label="" placeholder="Any additional notes about this tenant or tenancy…" value={notes} onChangeText={setNotes} multiline />
             </View>
-          </FadeIn>
+          </Section>
 
           {submitError ? (
             <View style={{ paddingHorizontal: 4, marginBottom: -6 }}>
               <Text style={{ color: "#F87171", fontSize: 12, textAlign: "center" }}>{submitError}</Text>
             </View>
           ) : null}
-          <FadeIn delay={380}>
+          <Section>
             <TouchableOpacity style={[s.submitBtn, submitting && { opacity: 0.6 }]} onPress={handleSubmit} activeOpacity={0.85} disabled={submitting}>
-              <Text style={s.submitTxt}>{submitting ? "Saving…" : "Add Tenant"}</Text>
+              <Text style={s.submitTxt}>{submitting ? "Creating Account…" : "Create Renter Account"}</Text>
             </TouchableOpacity>
-          </FadeIn>
-
+          </Section>
+            </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -310,6 +429,9 @@ const s = StyleSheet.create({
   content: { padding: 16, gap: 14 },
   card:    { backgroundColor: WHITE_08, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: WHITE_15 },
   cardTitle:    { fontSize: 14, fontWeight: "700", color: WHITE, marginBottom: 14, letterSpacing: 0.2 },
+  credentialsHint: { color: WHITE_40, fontSize: 11, marginBottom: 12, lineHeight: 16 },
+  emptyMessage: { color: WHITE_72, fontSize: 13, lineHeight: 19 },
+  retryText: { color: ACCENT_LIGHT, fontWeight: "700", fontSize: 13, marginTop: 10 },
   twoCol:       { flexDirection: "row", gap: 12 },
   errMsg:       { fontSize: 11, color: DANGER, marginBottom: 10 },
   unitRow:      { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: WHITE_15, marginBottom: 8, backgroundColor: WHITE_05 },
@@ -336,4 +458,13 @@ const s = StyleSheet.create({
   checkLblDone: { color: WHITE_40, textDecorationLine: "line-through" },
   submitBtn:    { backgroundColor: SUCCESS, borderRadius: 16, height: 54, alignItems: "center", justifyContent: "center" },
   submitTxt:    { fontSize: 15, fontWeight: "800", color: WHITE, letterSpacing: 0.3 },
+  successTitle: { fontSize: 20, fontWeight: "800", color: SUCCESS, marginBottom: 8 },
+  successMessage: { fontSize: 13, lineHeight: 19, color: WHITE_72, marginBottom: 16 },
+  credentialRow: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: WHITE_08 },
+  credentialLabel: { color: WHITE_40, fontSize: 11, marginBottom: 4 },
+  credentialValue: { color: WHITE, fontSize: 14, fontWeight: "700" },
+  copyBtn: { backgroundColor: SUCCESS, borderRadius: 14, height: 50, alignItems: "center", justifyContent: "center", marginTop: 16 },
+  securityHint: { color: WARNING, fontSize: 11, lineHeight: 16, marginTop: 12 },
+  doneBtn: { alignItems: "center", paddingVertical: 14 },
+  doneTxt: { color: WHITE_72, fontWeight: "700", fontSize: 13 },
 });
